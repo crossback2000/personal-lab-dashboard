@@ -123,6 +123,11 @@ export function defaultRateLimitPolicies() {
       limit: parsePositiveInt(process.env.RATE_LIMIT_BACKUP_DOWNLOAD, 10),
       windowMs: 60 * 1000
     },
+    backupDelete: {
+      scope: "backup-delete",
+      limit: parsePositiveInt(process.env.RATE_LIMIT_BACKUP_DELETE, 20),
+      windowMs: 60 * 1000
+    },
     restoreUpload: {
       scope: "restore-upload",
       limit: parsePositiveInt(process.env.RATE_LIMIT_RESTORE_UPLOAD, 5),

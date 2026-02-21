@@ -89,6 +89,7 @@ function formatRetentionSummary(retention: RetentionPolicy) {
 export function BackupControls() {
   const [message, setMessage] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  const [deletingFile, setDeletingFile] = useState<string | null>(null);
   const [backups, setBackups] = useState<BackupMeta[]>([]);
   const [retention, setRetention] = useState<RetentionPolicy>({
     keepDays: 30,
@@ -144,6 +145,42 @@ export function BackupControls() {
       setMessage(error instanceof Error ? error.message : "백업 생성 실패");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function deleteBackup(fileName: string) {
+    const shouldProceed = window.confirm(`백업 파일을 삭제할까요?\n${fileName}`);
+    if (!shouldProceed) {
+      return;
+    }
+
+    setDeletingFile(fileName);
+    setMessage("");
+
+    try {
+      const response = await fetch("/api/backup/delete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ fileName })
+      });
+      const result = (await response.json()) as {
+        ok?: boolean;
+        message?: string;
+        deleted?: { fileName: string };
+      };
+
+      if (!response.ok || !result.ok) {
+        throw new Error(result.message || "백업 삭제 실패");
+      }
+
+      setMessage(`백업 삭제 완료: ${result.deleted?.fileName || fileName}`);
+      await refreshList();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "백업 삭제 중 오류가 발생했습니다.");
+    } finally {
+      setDeletingFile(null);
     }
   }
 
@@ -287,13 +324,29 @@ export function BackupControls() {
       <div className="mt-3 space-y-1 text-xs text-muted-foreground">
         <p>보관 정책: {formatRetentionSummary(retention)}</p>
         {backups.length > 0 ? (
-          <>
-            {backups.slice(0, 10).map((backup) => (
-              <p key={backup.file}>
-                {backup.file} ({formatBytes(backup.size)}) - {new Date(backup.modifiedAt).toLocaleString("ko-KR")}
-              </p>
-            ))}
-          </>
+          <div className="space-y-1">
+            {backups.slice(0, 10).map((backup) => {
+              const isDeleting = deletingFile === backup.file;
+              return (
+                <div key={backup.file} className="flex flex-wrap items-center gap-2">
+                  <p>
+                    {backup.file} ({formatBytes(backup.size)}) -{" "}
+                    {new Date(backup.modifiedAt).toLocaleString("ko-KR")}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void deleteBackup(backup.file);
+                    }}
+                    disabled={isDeleting || restoreStatus?.running === true}
+                    className={buttonStyles({ variant: "ghost", size: "sm" })}
+                  >
+                    {isDeleting ? "삭제 중..." : "삭제"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         ) : (
           <p>생성된 백업 파일이 없습니다.</p>
         )}

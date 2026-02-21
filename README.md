@@ -230,6 +230,7 @@ CSV 컬럼 레퍼런스:
 - 진입 경로: `/dashboard/backups`
 - 백업 생성: `/api/backup/create` (POST)
 - 백업 목록: `/api/backup/list` (GET)
+- 백업 삭제: `/api/backup/delete` (POST)
 - 원본 DB 다운로드: `/api/backup/download` (GET)
 - JSON Export: `/api/export/json` (GET)
 - CSV Export: `/api/export/csv` (GET)
