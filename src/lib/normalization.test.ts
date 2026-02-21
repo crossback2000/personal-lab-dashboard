@@ -2,14 +2,30 @@ import { describe, expect, it } from "vitest";
 import { normalizeObservationValue } from "@/lib/normalization";
 
 describe("normalizeObservationValue", () => {
-  it("calculates normalized value in range", () => {
+  it("uses midpoint as 0 and range bounds as -1/+1", () => {
     expect(
       normalizeObservationValue({
         value_numeric: 85,
         ref_low: 70,
         ref_high: 100
       })
-    ).toBe(0.5);
+    ).toBe(0);
+
+    expect(
+      normalizeObservationValue({
+        value_numeric: 70,
+        ref_low: 70,
+        ref_high: 100
+      })
+    ).toBe(-1);
+
+    expect(
+      normalizeObservationValue({
+        value_numeric: 100,
+        ref_low: 70,
+        ref_high: 100
+      })
+    ).toBe(1);
   });
 
   it("returns null when normalization cannot be calculated", () => {
@@ -30,14 +46,14 @@ describe("normalizeObservationValue", () => {
     ).toBeNull();
   });
 
-  it("clamps below-range values to 0 and above-range values to 1", () => {
+  it("does not clamp out-of-range values", () => {
     expect(
       normalizeObservationValue({
         value_numeric: 60,
         ref_low: 70,
         ref_high: 100
       })
-    ).toBe(0);
+    ).toBeCloseTo(-1.6666667, 6);
 
     expect(
       normalizeObservationValue({
@@ -45,6 +61,6 @@ describe("normalizeObservationValue", () => {
         ref_low: 70,
         ref_high: 100
       })
-    ).toBe(1);
+    ).toBeCloseTo(2.3333333, 6);
   });
 });

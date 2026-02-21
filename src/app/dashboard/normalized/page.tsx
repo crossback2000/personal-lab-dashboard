@@ -54,7 +54,7 @@ export default async function NormalizedPage({
         <div>
           <h2 className="text-2xl font-semibold">Normalized View</h2>
           <p className="text-sm text-muted-foreground">
-            단위가 다른 검사값을 동일한 0~1 스케일로 정규화해 한 화면에서 비교합니다.
+            단위가 다른 검사값을 동일한 중심 기준 점수로 변환해 한 화면에서 비교합니다.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -73,26 +73,6 @@ export default async function NormalizedPage({
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>정규화 공식</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-1 text-sm text-muted-foreground">
-          <p>
-            <code className="rounded bg-muted px-1 py-0.5 text-xs text-foreground">
-              (value - ref_low) / (ref_high - ref_low)
-            </code>
-          </p>
-          <p>
-            정규화 결과는 0~1 범위로 제한되며, ref 값이 없거나{" "}
-            <code className="rounded bg-muted px-1 py-0.5 text-xs text-foreground">
-              ref_high = ref_low
-            </code>{" "}
-            인 항목은 제외됩니다.
-          </p>
-        </CardContent>
-      </Card>
-
       {series.length === 0 ? (
         <p className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
           정규화 가능한 데이터가 없습니다. (숫자값 + ref_low/ref_high 필요)
@@ -103,7 +83,7 @@ export default async function NormalizedPage({
 
           <Card>
             <CardHeader>
-              <CardTitle>항목별 최신 정규화값</CardTitle>
+              <CardTitle>항목별 최신 점수</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
               <Table>
@@ -111,7 +91,7 @@ export default async function NormalizedPage({
                   <TableRow>
                     <TableHead>검사 항목</TableHead>
                     <TableHead>카테고리</TableHead>
-                    <TableHead>최신 정규화값</TableHead>
+                    <TableHead>최신 점수</TableHead>
                     <TableHead>최신일</TableHead>
                     <TableHead>비교 포인트</TableHead>
                   </TableRow>

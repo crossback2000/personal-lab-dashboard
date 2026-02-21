@@ -29,17 +29,15 @@ export function normalizeObservationValue(
     return null;
   }
 
-  const normalized = (value - low) / span;
-  if (!Number.isFinite(normalized)) {
+  const midpoint = low + span / 2;
+  const halfRange = span / 2;
+  if (!Number.isFinite(midpoint) || !Number.isFinite(halfRange) || halfRange <= 0) {
     return null;
   }
 
-  if (normalized < 0) {
-    return 0;
-  }
-
-  if (normalized > 1) {
-    return 1;
+  const normalized = (value - midpoint) / halfRange;
+  if (!Number.isFinite(normalized)) {
+    return null;
   }
 
   return normalized;
