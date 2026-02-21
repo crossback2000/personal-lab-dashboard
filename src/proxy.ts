@@ -57,7 +57,9 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const jwt = request.headers.get("cf-access-jwt-assertion")?.trim();
+  const jwt =
+    request.headers.get("cf-access-jwt-assertion")?.trim() ||
+    request.cookies.get("CF_Authorization")?.value?.trim();
   const email = request.headers.get("cf-access-authenticated-user-email")?.trim();
   const allowedEmail = process.env.ACCESS_SINGLE_USER_EMAIL?.trim();
 
