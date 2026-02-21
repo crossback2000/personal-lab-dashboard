@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { cookies, headers } from "next/headers";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 export type LocalUser = {
@@ -246,10 +246,7 @@ export async function getCurrentUser(): Promise<LocalUser | null> {
   }
 
   const requestHeaders = await headers();
-  const requestCookies = await cookies();
-  const jwt =
-    requestHeaders.get("cf-access-jwt-assertion")?.trim() ||
-    requestCookies.get("CF_Authorization")?.value?.trim();
+  const jwt = requestHeaders.get("cf-access-jwt-assertion")?.trim();
   if (!jwt) {
     return null;
   }
