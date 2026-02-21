@@ -19,7 +19,6 @@ ENV DB_PATH=/data/lab-dashboard.sqlite
 ENV BACKUP_DIR=/data/backups
 ENV BACKUP_KEEP_DAYS=30
 
-COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/db ./db
