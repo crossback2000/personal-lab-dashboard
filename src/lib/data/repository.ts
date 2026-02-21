@@ -5,7 +5,8 @@ import type { ParsedObservationInput } from "@/lib/import/parser";
 import type { LabCategory, ObservationRow, TestRow } from "@/types/database";
 import type { PeriodOption } from "@/lib/constants";
 
-type DbTestRow = Omit<TestRow, "created_at" | "updated_at"> & {
+type DbTestRow = Omit<TestRow, "category" | "created_at" | "updated_at"> & {
+  category: string;
   created_at: string;
   updated_at: string;
 };
@@ -89,6 +90,7 @@ function periodToStartDate(period: PeriodOption) {
 function mapTest(row: DbTestRow): TestRow {
   return {
     ...row,
+    category: normalizeCategory(row.category),
     name_ko: row.name_ko ?? null,
     unit_default: row.unit_default ?? null
   };
@@ -220,7 +222,7 @@ export async function getObservationsWithTests() {
       id: row.test_id,
       name_en: row.test_name_en,
       name_ko: row.test_name_ko,
-      category: row.test_category,
+      category: normalizeCategory(row.test_category),
       unit_default: row.test_unit_default
     }
   }));
