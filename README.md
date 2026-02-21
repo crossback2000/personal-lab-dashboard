@@ -88,6 +88,7 @@ cp .env.example .env.local
 ACCESS_MODE=none
 ACCESS_SINGLE_USER_EMAIL=you@example.com
 REQUIRE_CLOUDFLARE_IN_PRODUCTION=true
+TRUST_PROXY=false
 CLOUDFLARE_ACCESS_TEAM_DOMAIN=
 CLOUDFLARE_ACCESS_AUD=
 CLOUDFLARE_ACCESS_ISSUER=
@@ -99,6 +100,7 @@ RESTORE_UPLOAD_MAX_BYTES=104857600
 RESTORE_MAX_PREPARED=5
 IMPORT_MAX_BYTES=10485760
 IMPORT_MAX_ROWS=100000
+SECURITY_CSP_REPORT_ONLY=true
 ```
 
 환경변수 상세:
@@ -108,6 +110,7 @@ IMPORT_MAX_ROWS=100000
 | `ACCESS_MODE` | `none` | 접근 제어 모드 (`none` 또는 `cloudflare`) | Cloudflare Access를 붙일 때 `cloudflare` |
 | `ACCESS_SINGLE_USER_EMAIL` | `you@example.com` | `cloudflare` 모드에서 허용할 단일 이메일 | 실제 사용자 이메일로 교체 |
 | `REQUIRE_CLOUDFLARE_IN_PRODUCTION` | `true` | 프로덕션에서 `ACCESS_MODE=cloudflare` 강제 여부 | 임시 점검용으로만 `false` |
+| `TRUST_PROXY` | `false` | 프록시 전달 IP(`x-forwarded-for`) 신뢰 여부 | 로드밸런서/리버스프록시 뒤에서 정확한 IP 제한이 필요할 때 |
 | `CLOUDFLARE_ACCESS_TEAM_DOMAIN` | _(빈 값)_ | Cloudflare Access 팀 도메인 (`your-team.cloudflareaccess.com`) | JWT 서명 검증을 사용할 때 |
 | `CLOUDFLARE_ACCESS_AUD` | _(빈 값)_ | Access Application의 AUD 태그 값 | JWT의 audience 검증에 사용 |
 | `CLOUDFLARE_ACCESS_ISSUER` | _(빈 값)_ | JWT `iss` 값(기본: `https://<team-domain>`) | 기본 issuer와 다를 때만 설정 |
@@ -119,6 +122,7 @@ IMPORT_MAX_ROWS=100000
 | `RESTORE_MAX_PREPARED` | `5` | 동시에 준비 가능한 복원 파일 수 | 메모리/디스크 사용량 제한 |
 | `IMPORT_MAX_BYTES` | `10485760` | 텍스트/CSV import 입력 최대 용량(바이트) | 대용량 붙여넣기 입력을 제한하고 싶을 때 |
 | `IMPORT_MAX_ROWS` | `100000` | 텍스트/CSV import 1회 최대 처리 행 수 | 실수로 너무 큰 import를 막고 싶을 때 |
+| `SECURITY_CSP_REPORT_ONLY` | `true` | 강화된 CSP를 Report-Only로 먼저 적용할지 여부 | CSP 위반 리포트를 먼저 확인하고 점진 전환할 때 |
 
 ### Step 3. DB 초기화 + 데모 데이터 입력
 
@@ -238,7 +242,7 @@ CSV 컬럼 레퍼런스:
 - 복원 실행: `/api/backup/restore/commit` (POST)
 - 복원 상태 조회: `/api/backup/restore/status` (GET)
 - 위 API는 인증 사용자만 접근 가능합니다 (`none` 모드 또는 Cloudflare 인증 통과 사용자).
-- 상태 변경 API(백업 생성/복원 업로드/복원 실행)는 same-origin 검사와 rate limit을 적용합니다.
+- 백업/복원/내보내기 API는 same-origin 검사와 rate limit을 적용합니다.
 - 고비용 API(백업/복원/내보내기)에는 IP 기반 rate limit이 적용됩니다.
 - 백업 생성/DB 다운로드는 SQLite `backup()` API 기반 스냅샷을 사용해 WAL 환경에서도 일관된 파일을 생성합니다.
 - 백업/복원 과정에서 생길 수 있는 임시 WAL/SHM 보조 파일은 자동 정리됩니다.

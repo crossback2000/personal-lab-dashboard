@@ -1,28 +1,18 @@
-import { NextResponse } from "next/server";
-import { requireApiUser } from "@/lib/auth";
 import { getObservationsWithTests } from "@/lib/data/repository";
-import { checkRateLimit, defaultRateLimitPolicies } from "@/lib/request-security";
+import { defaultRateLimitPolicies } from "@/lib/request-security";
+import { guardApiRequest, withNoStoreHeaders } from "@/lib/http/guard";
+import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const limitResult = checkRateLimit(request, defaultRateLimitPolicies().exportJson);
-  if (!limitResult.ok) {
-    return NextResponse.json(
-      { ok: false, message: "Too many requests. Please retry later." },
-      {
-        status: 429,
-        headers: {
-          "Retry-After": String(limitResult.retryAfterSec)
-        }
-      }
-    );
-  }
-
-  try {
-    await requireApiUser();
-  } catch {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const guard = await guardApiRequest(request, {
+    auth: "api-user",
+    sameOrigin: true,
+    rateLimitPolicy: defaultRateLimitPolicies().exportJson
+  });
+  if (!guard.ok) {
+    return guard.response;
   }
 
   const rows = await getObservationsWithTests();
@@ -37,11 +27,9 @@ export async function GET(request: Request) {
 
   return new NextResponse(payload, {
     status: 200,
-    headers: {
+    headers: withNoStoreHeaders({
       "Content-Type": "application/json; charset=utf-8",
       "Content-Disposition": 'attachment; filename="lab-observations.json"',
-      "Cache-Control": "no-store",
-      Pragma: "no-cache"
-    }
+    })
   });
 }

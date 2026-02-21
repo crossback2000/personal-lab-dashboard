@@ -1,44 +1,33 @@
-import { NextResponse } from "next/server";
-import { requireRestoreAdmin } from "@/lib/auth";
-import { checkRateLimit, defaultRateLimitPolicies, isSameOriginRequest } from "@/lib/request-security";
+import { defaultRateLimitPolicies } from "@/lib/request-security";
 import {
   commitPreparedRestore,
   RestoreCommitError,
   RestoreTokenError,
   RestoreValidationError
 } from "@/lib/restore";
+import { guardApiRequest, jsonNoStore } from "@/lib/http/guard";
+import { exceedsSmallJsonBodyLimit, smallJsonBodyLimitBytes } from "@/lib/http/body-size";
 
 export const dynamic = "force-dynamic";
 
-function authErrorStatus(error: unknown) {
-  if (error instanceof Error && error.message === "UNAUTHORIZED") {
-    return 401;
-  }
-  return 403;
-}
-
 export async function POST(request: Request) {
-  if (!isSameOriginRequest(request)) {
-    return NextResponse.json({ ok: false, message: "Forbidden origin" }, { status: 403 });
+  const guard = await guardApiRequest(request, {
+    auth: "restore-admin",
+    sameOrigin: true,
+    rateLimitPolicy: defaultRateLimitPolicies().restoreCommit
+  });
+  if (!guard.ok) {
+    return guard.response;
   }
 
-  const limitResult = checkRateLimit(request, defaultRateLimitPolicies().restoreCommit);
-  if (!limitResult.ok) {
-    return NextResponse.json(
-      { ok: false, message: "Too many requests. Please retry later." },
+  if (exceedsSmallJsonBodyLimit(request)) {
+    return jsonNoStore(
       {
-        status: 429,
-        headers: {
-          "Retry-After": String(limitResult.retryAfterSec)
-        }
-      }
+        ok: false,
+        message: `요청 본문이 너무 큽니다. 최대 ${smallJsonBodyLimitBytes().toLocaleString("en-US")} bytes까지 허용됩니다.`
+      },
+      { status: 413 }
     );
-  }
-
-  try {
-    await requireRestoreAdmin();
-  } catch (error) {
-    return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: authErrorStatus(error) });
   }
 
   let restoreToken = "";
@@ -46,23 +35,29 @@ export async function POST(request: Request) {
     const body = (await request.json()) as { restoreToken?: string };
     restoreToken = String(body.restoreToken || "").trim();
   } catch {
-    return NextResponse.json({ ok: false, message: "요청 본문(JSON)을 해석할 수 없습니다." }, { status: 400 });
+    return jsonNoStore(
+      { ok: false, message: "요청 본문(JSON)을 해석할 수 없습니다." },
+      { status: 400 }
+    );
   }
 
   if (!restoreToken) {
-    return NextResponse.json({ ok: false, message: "restoreToken이 필요합니다." }, { status: 400 });
+    return jsonNoStore(
+      { ok: false, message: "restoreToken이 필요합니다." },
+      { status: 400 }
+    );
   }
 
   try {
     const result = await commitPreparedRestore(restoreToken);
-    return NextResponse.json({ ok: true, ...result });
+    return jsonNoStore({ ok: true, ...result });
   } catch (error) {
     if (error instanceof RestoreTokenError) {
-      return NextResponse.json({ ok: false, message: error.message }, { status: 400 });
+      return jsonNoStore({ ok: false, message: error.message }, { status: 400 });
     }
 
     if (error instanceof RestoreValidationError) {
-      return NextResponse.json(
+      return jsonNoStore(
         {
           ok: false,
           message: error.message,
@@ -73,7 +68,7 @@ export async function POST(request: Request) {
     }
 
     if (error instanceof RestoreCommitError) {
-      return NextResponse.json(
+      return jsonNoStore(
         {
           ok: false,
           message: error.message,
@@ -84,8 +79,9 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "DB 복원 중 오류가 발생했습니다." },
+    console.error("[restore.commit] failed", error);
+    return jsonNoStore(
+      { ok: false, message: "DB 복원 중 오류가 발생했습니다." },
       { status: 500 }
     );
   }

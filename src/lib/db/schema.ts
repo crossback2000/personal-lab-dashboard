@@ -30,4 +30,5 @@ create table if not exists observations (
 
 create index if not exists idx_tests_category on tests(category, name_ko, name_en);
 create index if not exists idx_observations_test_date on observations(test_id, observed_at desc);
+create index if not exists idx_observations_observed_at on observations(observed_at desc);
 `;

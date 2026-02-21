@@ -58,7 +58,7 @@ export default async function TestDetailPage({
     notFound();
   }
 
-  const observations = await getObservations(id, period);
+  const observations = await getObservations(id, period, { includeRawRow: false });
   const numericRows = observations.filter((row) => row.value_numeric !== null);
   const latest = observations[0] ?? null;
   const explanation = findTestExplanation([test.name_ko, test.name_en]);

@@ -1,4 +1,6 @@
-type RateLimitPolicy = {
+import { isCloudflareModeEnabled, isProxyTrusted } from "@/lib/env";
+
+export type RateLimitPolicy = {
   scope: string;
   limit: number;
   windowMs: number;
@@ -45,10 +47,24 @@ function normalizeForwardedProto(raw: string | null) {
   return first;
 }
 
-export function getClientIp(request: Request) {
-  const cfIp = request.headers.get("cf-connecting-ip");
-  if (cfIp) {
-    return normalizeIp(cfIp);
+export function getClientIp(
+  request: Request,
+  options?: {
+    trustProxy?: boolean;
+    cloudflareMode?: boolean;
+  }
+) {
+  const cloudflareMode = options?.cloudflareMode ?? isCloudflareModeEnabled();
+  if (cloudflareMode) {
+    const cfIp = request.headers.get("cf-connecting-ip");
+    if (cfIp) {
+      return normalizeIp(cfIp);
+    }
+  }
+
+  const trustProxy = options?.trustProxy ?? isProxyTrusted();
+  if (!trustProxy) {
+    return "unknown";
   }
 
   const forwardedFor = request.headers.get("x-forwarded-for");
@@ -156,7 +172,12 @@ export function defaultRateLimitPolicies() {
   };
 }
 
-export function isSameOriginRequest(request: Request) {
+export function isSameOriginRequest(
+  request: Request,
+  options?: {
+    allowNoneFetchSite?: boolean;
+  }
+) {
   const requestHost = normalizeHost(
     request.headers.get("x-forwarded-host") ??
       request.headers.get("host")
@@ -207,7 +228,13 @@ export function isSameOriginRequest(request: Request) {
   }
 
   const fetchSite = request.headers.get("sec-fetch-site")?.trim().toLowerCase();
-  if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "same-site" && fetchSite !== "none") {
+  if (fetchSite) {
+    if (fetchSite === "same-origin") {
+      return true;
+    }
+    if (fetchSite === "none" && options?.allowNoneFetchSite) {
+      return true;
+    }
     return false;
   }
 

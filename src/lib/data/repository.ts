@@ -1,9 +1,13 @@
 import { formatISO, startOfDay, subMonths, subYears } from "date-fns";
 import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
-import type { ParsedObservationInput } from "@/lib/import/parser";
-import type { LabCategory, ObservationRow, TestRow } from "@/types/database";
 import type { PeriodOption } from "@/lib/constants";
+import type { ParsedObservationInput } from "@/lib/import/parser";
+import {
+  normalizeObservationValue,
+  type NormalizedSeries
+} from "@/lib/normalization";
+import type { LabCategory, ObservationRow, TestRow } from "@/types/database";
 
 type DbTestRow = Omit<TestRow, "category" | "created_at" | "updated_at"> & {
   category: string;
@@ -15,6 +19,37 @@ type DbObservationRow = Omit<ObservationRow, "raw_row" | "created_at" | "updated
   raw_row: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export interface DashboardCardData {
+  test: TestRow;
+  latest: ObservationRow | null;
+  sparklineValues: number[];
+}
+
+type NormalizedSeriesQueryRow = {
+  test_id: string;
+  observed_at: string;
+  value_numeric: number;
+  ref_low: number;
+  ref_high: number;
+  name_en: string;
+  name_ko: string | null;
+  category: string;
+};
+
+type LatestObservationJoinedRow = {
+  test_id: string;
+  observation_id: string | null;
+  observed_at: string | null;
+  value_numeric: number | null;
+  value_text: string | null;
+  unit: string | null;
+  ref_low: number | null;
+  ref_high: number | null;
+  flag: "H" | "L" | null;
+  created_at: string | null;
+  updated_at: string | null;
 };
 
 function nowIso() {
@@ -96,10 +131,16 @@ function mapTest(row: DbTestRow): TestRow {
   };
 }
 
-function mapObservation(row: DbObservationRow): ObservationRow {
+function mapObservation(
+  row: DbObservationRow,
+  options?: {
+    includeRawRow?: boolean;
+  }
+): ObservationRow {
+  const includeRawRow = options?.includeRawRow ?? true;
   let rawRow: Record<string, unknown> | null = null;
 
-  if (row.raw_row) {
+  if (includeRawRow && row.raw_row) {
     try {
       rawRow = JSON.parse(row.raw_row) as Record<string, unknown>;
     } catch {
@@ -119,6 +160,32 @@ function mapObservation(row: DbObservationRow): ObservationRow {
   };
 }
 
+function buildObservationFilter(params: {
+  testId?: string;
+  period?: PeriodOption;
+  tableAlias?: string;
+}) {
+  const clauses: string[] = [];
+  const values: string[] = [];
+  const tablePrefix = params.tableAlias ? `${params.tableAlias}.` : "";
+
+  if (params.testId) {
+    clauses.push(`${tablePrefix}test_id = ?`);
+    values.push(params.testId);
+  }
+
+  const startDate = periodToStartDate(params.period ?? "all");
+  if (startDate) {
+    clauses.push(`${tablePrefix}observed_at >= ?`);
+    values.push(startDate);
+  }
+
+  return {
+    where: clauses.length > 0 ? `where ${clauses.join(" and ")}` : "",
+    values
+  };
+}
+
 export async function getTests() {
   const db = getDb();
   const rows = db
@@ -134,24 +201,16 @@ export async function getTests() {
   return rows.map(mapTest);
 }
 
-export async function getObservations(testId?: string, period: PeriodOption = "all") {
+export async function getObservations(
+  testId?: string,
+  period: PeriodOption = "all",
+  options?: {
+    includeRawRow?: boolean;
+  }
+) {
   const db = getDb();
-
-  const clauses: string[] = [];
-  const params: string[] = [];
-
-  if (testId) {
-    clauses.push("test_id = ?");
-    params.push(testId);
-  }
-
-  const startDate = periodToStartDate(period);
-  if (startDate) {
-    clauses.push("observed_at >= ?");
-    params.push(startDate);
-  }
-
-  const where = clauses.length > 0 ? `where ${clauses.join(" and ")}` : "";
+  const includeRawRow = options?.includeRawRow ?? true;
+  const { where, values } = buildObservationFilter({ testId, period });
 
   const rows = db
     .prepare(
@@ -166,7 +225,7 @@ export async function getObservations(testId?: string, period: PeriodOption = "a
         ref_low,
         ref_high,
         flag,
-        raw_row,
+        ${includeRawRow ? "raw_row" : "null as raw_row"},
         created_at,
         updated_at
       from observations
@@ -174,13 +233,18 @@ export async function getObservations(testId?: string, period: PeriodOption = "a
       order by observed_at desc
     `
     )
-    .all(...params) as DbObservationRow[];
+    .all(...values) as DbObservationRow[];
 
-  return rows.map(mapObservation);
+  return rows.map((row) => mapObservation(row, { includeRawRow }));
 }
 
-export async function getObservationsWithTests() {
+export async function getObservationsLite(testId?: string, period: PeriodOption = "all") {
+  return getObservations(testId, period, { includeRawRow: false });
+}
+
+export async function getObservationsWithTests(options?: { includeRawRow?: boolean }) {
   const db = getDb();
+  const includeRawRow = options?.includeRawRow ?? true;
 
   const rows = db
     .prepare(
@@ -195,7 +259,7 @@ export async function getObservationsWithTests() {
         o.ref_low,
         o.ref_high,
         o.flag,
-        o.raw_row,
+        ${includeRawRow ? "o.raw_row" : "null as raw_row"},
         o.created_at,
         o.updated_at,
         t.name_en as test_name_en,
@@ -217,7 +281,7 @@ export async function getObservationsWithTests() {
   >;
 
   return rows.map((row) => ({
-    observation: mapObservation(row),
+    observation: mapObservation(row, { includeRawRow }),
     test: {
       id: row.test_id,
       name_en: row.test_name_en,
@@ -226,6 +290,235 @@ export async function getObservationsWithTests() {
       unit_default: row.test_unit_default
     }
   }));
+}
+
+export async function getDashboardCards(options?: { sparklinePoints?: number }) {
+  const db = getDb();
+  const sparklinePoints = Math.max(2, Math.min(20, options?.sparklinePoints ?? 10));
+  const tests = await getTests();
+
+  const latestRows = db
+    .prepare(
+      `
+      with latest as (
+        select
+          id,
+          test_id,
+          observed_at,
+          value_numeric,
+          value_text,
+          unit,
+          ref_low,
+          ref_high,
+          flag,
+          created_at,
+          updated_at,
+          row_number() over (
+            partition by test_id
+            order by observed_at desc
+          ) as row_num
+        from observations
+      )
+      select
+        t.id as test_id,
+        l.id as observation_id,
+        l.observed_at,
+        l.value_numeric,
+        l.value_text,
+        l.unit,
+        l.ref_low,
+        l.ref_high,
+        l.flag,
+        l.created_at,
+        l.updated_at
+      from tests t
+      left join latest l on l.test_id = t.id and l.row_num = 1
+    `
+    )
+    .all() as LatestObservationJoinedRow[];
+
+  const latestMap = new Map<string, ObservationRow>();
+  for (const row of latestRows) {
+    if (!row.observation_id || !row.observed_at || !row.created_at || !row.updated_at) {
+      continue;
+    }
+
+    latestMap.set(
+      row.test_id,
+      mapObservation(
+        {
+          id: row.observation_id,
+          test_id: row.test_id,
+          observed_at: row.observed_at,
+          value_numeric: row.value_numeric,
+          value_text: row.value_text,
+          unit: row.unit,
+          ref_low: row.ref_low,
+          ref_high: row.ref_high,
+          flag: row.flag,
+          raw_row: null,
+          created_at: row.created_at,
+          updated_at: row.updated_at
+        },
+        { includeRawRow: false }
+      )
+    );
+  }
+
+  const sparklineRows = db
+    .prepare(
+      `
+      select test_id, value_numeric
+      from (
+        select
+          test_id,
+          value_numeric,
+          observed_at,
+          row_number() over (
+            partition by test_id
+            order by observed_at desc
+          ) as row_num
+        from observations
+        where value_numeric is not null
+      ) ranked
+      where row_num <= ?
+      order by test_id asc, observed_at asc
+    `
+    )
+    .all(sparklinePoints) as Array<{ test_id: string; value_numeric: number }>;
+
+  const sparklineMap = new Map<string, number[]>();
+  for (const row of sparklineRows) {
+    const values = sparklineMap.get(row.test_id) ?? [];
+    values.push(row.value_numeric);
+    sparklineMap.set(row.test_id, values);
+  }
+
+  return tests.map((test) => ({
+    test,
+    latest: latestMap.get(test.id) ?? null,
+    sparklineValues: sparklineMap.get(test.id) ?? []
+  } satisfies DashboardCardData));
+}
+
+export async function getNormalizedSeries(options?: {
+  period?: PeriodOption;
+  maxPointsPerTest?: number;
+}) {
+  const db = getDb();
+  const period = options?.period ?? "all";
+  const maxPointsPerTest = Math.max(5, Math.min(200, options?.maxPointsPerTest ?? 40));
+  const { where, values } = buildObservationFilter({ period, tableAlias: "o" });
+
+  const filterClauses = [where.replace(/^where\s+/i, "").trim()]
+    .filter(Boolean)
+    .concat([
+      "o.value_numeric is not null",
+      "o.ref_low is not null",
+      "o.ref_high is not null",
+      "o.ref_high > o.ref_low"
+    ]);
+
+  const rows = db
+    .prepare(
+      `
+      select
+        ranked.test_id,
+        ranked.observed_at,
+        ranked.value_numeric,
+        ranked.ref_low,
+        ranked.ref_high,
+        ranked.name_en,
+        ranked.name_ko,
+        ranked.category
+      from (
+        select
+          o.test_id,
+          o.observed_at,
+          o.value_numeric,
+          o.ref_low,
+          o.ref_high,
+          t.name_en,
+          t.name_ko,
+          t.category,
+          row_number() over (
+            partition by o.test_id
+            order by o.observed_at desc
+          ) as row_num
+        from observations o
+        join tests t on t.id = o.test_id
+        where ${filterClauses.join(" and ")}
+      ) ranked
+      where ranked.row_num <= ?
+      order by ranked.test_id asc, ranked.observed_at desc
+    `
+    )
+    .all(...values, maxPointsPerTest) as NormalizedSeriesQueryRow[];
+
+  const grouped = new Map<
+    string,
+    {
+      testId: string;
+      label: string;
+      labelSub: string | null;
+      category: LabCategory;
+      pointsDesc: Array<{ observedAt: string; value: number }>;
+    }
+  >();
+
+  for (const row of rows) {
+    const normalizedValue = normalizeObservationValue({
+      value_numeric: row.value_numeric,
+      ref_low: row.ref_low,
+      ref_high: row.ref_high
+    });
+
+    if (normalizedValue === null) {
+      continue;
+    }
+
+    const entry =
+      grouped.get(row.test_id) ??
+      {
+        testId: row.test_id,
+        label: row.name_ko || row.name_en,
+        labelSub: row.name_ko && row.name_en ? row.name_en : null,
+        category: normalizeCategory(row.category),
+        pointsDesc: []
+      };
+
+    entry.pointsDesc.push({
+      observedAt: row.observed_at,
+      value: normalizedValue
+    });
+
+    grouped.set(row.test_id, entry);
+  }
+
+  const series: NormalizedSeries[] = [];
+
+  for (const entry of grouped.values()) {
+    const latest = entry.pointsDesc[0];
+    if (!latest) {
+      continue;
+    }
+
+    series.push({
+      testId: entry.testId,
+      label: entry.label,
+      labelSub: entry.labelSub,
+      category: entry.category,
+      latestObservedAt: latest.observedAt,
+      latestValue: latest.value,
+      points: [...entry.pointsDesc].reverse()
+    });
+  }
+
+  return series.sort(
+    (a, b) =>
+      new Date(b.latestObservedAt).getTime() -
+      new Date(a.latestObservedAt).getTime()
+  );
 }
 
 async function findExistingTestByName(testNameEn: string, testNameKo: string | null) {
@@ -383,28 +676,9 @@ function deriveFlag(params: {
   return inputFlag;
 }
 
-export async function upsertObservation(params: {
-  testId: string;
-  observedAt: string;
-  valueNumeric: number | null;
-  valueText: string | null;
-  unit: string | null;
-  refLow: number | null;
-  refHigh: number | null;
-  flag: "H" | "L" | null;
-  rawRow?: Record<string, unknown> | null;
-}) {
+function prepareObservationUpsertStatement() {
   const db = getDb();
-  const id = randomUUID();
-  const timestamp = nowIso();
-  const derivedFlag = deriveFlag({
-    valueNumeric: params.valueNumeric,
-    refLow: params.refLow,
-    refHigh: params.refHigh,
-    inputFlag: params.flag
-  });
-
-  db.prepare(
+  return db.prepare(
     `
     insert into observations (
       id,
@@ -431,7 +705,33 @@ export async function upsertObservation(params: {
       raw_row = excluded.raw_row,
       updated_at = excluded.updated_at
   `
-  ).run(
+  );
+}
+
+function runObservationUpsert(
+  statement: ReturnType<typeof prepareObservationUpsertStatement>,
+  params: {
+    testId: string;
+    observedAt: string;
+    valueNumeric: number | null;
+    valueText: string | null;
+    unit: string | null;
+    refLow: number | null;
+    refHigh: number | null;
+    flag: "H" | "L" | null;
+    rawRow?: Record<string, unknown> | null;
+  }
+) {
+  const id = randomUUID();
+  const timestamp = nowIso();
+  const derivedFlag = deriveFlag({
+    valueNumeric: params.valueNumeric,
+    refLow: params.refLow,
+    refHigh: params.refHigh,
+    inputFlag: params.flag
+  });
+
+  statement.run(
     id,
     params.testId,
     params.observedAt,
@@ -445,6 +745,22 @@ export async function upsertObservation(params: {
     timestamp,
     timestamp
   );
+}
+
+export async function upsertObservation(params: {
+  testId: string;
+  observedAt: string;
+  valueNumeric: number | null;
+  valueText: string | null;
+  unit: string | null;
+  refLow: number | null;
+  refHigh: number | null;
+  flag: "H" | "L" | null;
+  rawRow?: Record<string, unknown> | null;
+}) {
+  const db = getDb();
+  const upsertStatement = prepareObservationUpsertStatement();
+  runObservationUpsert(upsertStatement, params);
 
   const row = db
     .prepare(
@@ -476,37 +792,51 @@ export async function importParsedObservations(params: {
   rows: ParsedObservationInput[];
   category?: string | null;
 }) {
+  const db = getDb();
+  const upsertStatement = prepareObservationUpsertStatement();
   const cache = new Map<string, TestRow>();
   let inserted = 0;
 
-  for (const row of params.rows) {
-    const cacheKey = `${row.testNameEn}::${row.testNameKo ?? ""}`;
-    let test = cache.get(cacheKey);
+  db.exec("begin immediate");
 
-    if (!test) {
-      test = await createOrGetTest({
-        testNameEn: row.testNameEn,
-        testNameKo: row.testNameKo,
-        category: row.categoryHint ?? params.category,
-        unitDefault: row.unit
+  try {
+    for (const row of params.rows) {
+      const cacheKey = `${row.testNameEn}::${row.testNameKo ?? ""}`;
+      let test = cache.get(cacheKey);
+
+      if (!test) {
+        test = await createOrGetTest({
+          testNameEn: row.testNameEn,
+          testNameKo: row.testNameKo,
+          category: row.categoryHint ?? params.category,
+          unitDefault: row.unit
+        });
+        cache.set(cacheKey, test);
+      }
+
+      runObservationUpsert(upsertStatement, {
+        testId: test.id,
+        observedAt: row.observedAt,
+        valueNumeric: row.valueNumeric,
+        valueText: row.valueText,
+        unit: row.unit ?? test.unit_default,
+        refLow: row.refLow,
+        refHigh: row.refHigh,
+        flag: row.flag,
+        rawRow: { line: row.rawRow }
       });
-      cache.set(cacheKey, test);
+
+      inserted += 1;
     }
 
-    await upsertObservation({
-      testId: test.id,
-      observedAt: row.observedAt,
-      valueNumeric: row.valueNumeric,
-      valueText: row.valueText,
-      unit: row.unit ?? test.unit_default,
-      refLow: row.refLow,
-      refHigh: row.refHigh,
-      flag: row.flag,
-      rawRow: { line: row.rawRow }
-    });
-
-    inserted += 1;
+    db.exec("commit");
+    return inserted;
+  } catch (error) {
+    try {
+      db.exec("rollback");
+    } catch {
+      // noop
+    }
+    throw error;
   }
-
-  return inserted;
 }

@@ -1,63 +1,28 @@
 import { CATEGORY_ORDER, categoryLabel } from "@/lib/constants";
-import { getObservations, getTests } from "@/lib/data/repository";
+import { getDashboardCards, type DashboardCardData } from "@/lib/data/repository";
 import { TestCard } from "@/components/dashboard/test-card";
-import type { ObservationRow, TestRow } from "@/types/database";
+import type { TestRow } from "@/types/database";
 
 type SectionData = {
   category: TestRow["category"];
-  cards: Array<{
-    test: TestRow;
-    latest: ObservationRow | null;
-    sparklineValues: number[];
-  }>;
+  cards: DashboardCardData[];
 };
 
 export default async function DashboardPage() {
-  const [tests, observations] = await Promise.all([
-    getTests(),
-    getObservations()
-  ]);
-
-  const observationMap = new Map<string, ObservationRow[]>();
-  for (const observation of observations) {
-    const list = observationMap.get(observation.test_id) ?? [];
-    list.push(observation);
-    observationMap.set(observation.test_id, list);
-  }
-
-  const testsByCategory = new Map<TestRow["category"], TestRow[]>();
-  for (const test of tests) {
-    const list = testsByCategory.get(test.category);
+  const cards = await getDashboardCards({ sparklinePoints: 10 });
+  const cardsByCategory = new Map<TestRow["category"], DashboardCardData[]>();
+  for (const card of cards) {
+    const list = cardsByCategory.get(card.test.category);
     if (list) {
-      list.push(test);
+      list.push(card);
       continue;
     }
-    testsByCategory.set(test.category, [test]);
+    cardsByCategory.set(card.test.category, [card]);
   }
 
   const sections: SectionData[] = CATEGORY_ORDER.map((category) => ({
     category,
-    cards: (testsByCategory.get(category) ?? []).map((test) => {
-      const list = observationMap.get(test.id) ?? [];
-      const numericValues: number[] = [];
-
-      for (const item of list) {
-        if (item.value_numeric !== null) {
-          numericValues.push(item.value_numeric);
-          if (numericValues.length >= 8) {
-            break;
-          }
-        }
-      }
-
-      numericValues.reverse();
-
-      return {
-        test,
-        latest: list[0] ?? null,
-        sparklineValues: numericValues
-      };
-    })
+    cards: cardsByCategory.get(category) ?? []
   })).filter((section) => section.cards.length > 0);
 
   return (
@@ -74,7 +39,7 @@ export default async function DashboardPage() {
       {sections.map((section) => (
         <section key={section.category} className="space-y-3">
           <h3 className="text-lg font-semibold">{categoryLabel(section.category)}</h3>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {section.cards.map((card) => (
               <TestCard
                 key={card.test.id}

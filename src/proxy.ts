@@ -1,4 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
+import {
+  getSecurityConfigError,
+  isCloudflareModeEnabled
+} from "@/lib/env";
 
 const BYPASS_PATHS = ["/unauthorized", "/_next", "/favicon.ico"];
 
@@ -6,50 +10,13 @@ function normalize(value: string) {
   return value.trim().toLowerCase();
 }
 
-function isCloudflareMode() {
-  return normalize(process.env.ACCESS_MODE || "none") === "cloudflare";
-}
-
-function requireCloudflareInProduction() {
-  const raw = process.env.REQUIRE_CLOUDFLARE_IN_PRODUCTION;
-  if (!raw) {
-    return true;
-  }
-  const normalizedValue = normalize(raw);
-  if (["0", "false", "no", "n", "off"].includes(normalizedValue)) {
-    return false;
-  }
-  if (["1", "true", "yes", "y", "on"].includes(normalizedValue)) {
-    return true;
-  }
-  return true;
-}
-
-function cloudflareAccessConfigReady() {
-  const teamDomain = process.env.CLOUDFLARE_ACCESS_TEAM_DOMAIN?.trim();
-  const audience = process.env.CLOUDFLARE_ACCESS_AUD?.trim();
-  return !!teamDomain && !!audience;
-}
-
 export function proxy(request: NextRequest) {
-  if (
-    process.env.NODE_ENV === "production" &&
-    requireCloudflareInProduction() &&
-    !isCloudflareMode()
-  ) {
-    return new NextResponse("Security configuration error: ACCESS_MODE must be cloudflare in production.", {
-      status: 503
-    });
+  const securityConfigError = getSecurityConfigError();
+  if (securityConfigError) {
+    return new NextResponse(securityConfigError, { status: 503 });
   }
 
-  if (isCloudflareMode() && !cloudflareAccessConfigReady()) {
-    return new NextResponse(
-      "Security configuration error: CLOUDFLARE_ACCESS_TEAM_DOMAIN and CLOUDFLARE_ACCESS_AUD are required.",
-      { status: 503 }
-    );
-  }
-
-  if (!isCloudflareMode()) {
+  if (!isCloudflareModeEnabled()) {
     return NextResponse.next();
   }
 

@@ -1,6 +1,11 @@
 import crypto from "node:crypto";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import {
+  getSecurityConfigError,
+  isCloudflareModeEnabled,
+  shouldRequireCloudflareInProduction
+} from "@/lib/env";
 
 export type LocalUser = {
   id: string;
@@ -9,10 +14,6 @@ export type LocalUser = {
 
 function normalized(value: string) {
   return value.trim().toLowerCase();
-}
-
-function cloudflareModeEnabled() {
-  return normalized(process.env.ACCESS_MODE || "none") === "cloudflare";
 }
 
 type CloudflareJwtHeader = {
@@ -48,24 +49,6 @@ const jwkCache = new Map<string, JwkCacheEntry>();
 
 function stripTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
-}
-
-function toBoolean(value: string | undefined, fallback: boolean) {
-  if (value === undefined) {
-    return fallback;
-  }
-  const normalizedValue = value.trim().toLowerCase();
-  if (["1", "true", "yes", "y", "on"].includes(normalizedValue)) {
-    return true;
-  }
-  if (["0", "false", "no", "n", "off"].includes(normalizedValue)) {
-    return false;
-  }
-  return fallback;
-}
-
-function requireCloudflareInProduction() {
-  return toBoolean(process.env.REQUIRE_CLOUDFLARE_IN_PRODUCTION, true);
 }
 
 function parseCloudflareTeamDomain(raw: string | undefined) {
@@ -233,11 +216,19 @@ async function verifyCloudflareAccessJwt(token: string) {
 }
 
 export async function getCurrentUser(): Promise<LocalUser | null> {
-  if (process.env.NODE_ENV === "production" && requireCloudflareInProduction() && !cloudflareModeEnabled()) {
+  if (getSecurityConfigError()) {
     return null;
   }
 
-  if (!cloudflareModeEnabled()) {
+  if (
+    process.env.NODE_ENV === "production" &&
+    shouldRequireCloudflareInProduction() &&
+    !isCloudflareModeEnabled()
+  ) {
+    return null;
+  }
+
+  if (!isCloudflareModeEnabled()) {
     const localEmail = process.env.ACCESS_SINGLE_USER_EMAIL?.trim() || "local-single-user@localhost";
     return {
       id: "local-single-user",

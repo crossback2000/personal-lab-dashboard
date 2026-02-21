@@ -1,8 +1,8 @@
 import Papa from "papaparse";
 import { NextResponse } from "next/server";
-import { requireApiUser } from "@/lib/auth";
 import { getObservationsWithTests } from "@/lib/data/repository";
-import { checkRateLimit, defaultRateLimitPolicies } from "@/lib/request-security";
+import { defaultRateLimitPolicies } from "@/lib/request-security";
+import { guardApiRequest, withNoStoreHeaders } from "@/lib/http/guard";
 
 export const dynamic = "force-dynamic";
 
@@ -19,23 +19,13 @@ function sanitizeCsvCell(value: string | null | undefined) {
 }
 
 export async function GET(request: Request) {
-  const limitResult = checkRateLimit(request, defaultRateLimitPolicies().exportCsv);
-  if (!limitResult.ok) {
-    return NextResponse.json(
-      { ok: false, message: "Too many requests. Please retry later." },
-      {
-        status: 429,
-        headers: {
-          "Retry-After": String(limitResult.retryAfterSec)
-        }
-      }
-    );
-  }
-
-  try {
-    await requireApiUser();
-  } catch {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const guard = await guardApiRequest(request, {
+    auth: "api-user",
+    sameOrigin: true,
+    rateLimitPolicy: defaultRateLimitPolicies().exportCsv
+  });
+  if (!guard.ok) {
+    return guard.response;
   }
 
   const rows = await getObservationsWithTests();
@@ -56,11 +46,9 @@ export async function GET(request: Request) {
 
   return new NextResponse(csv, {
     status: 200,
-    headers: {
+    headers: withNoStoreHeaders({
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": 'attachment; filename="lab-observations.csv"',
-      "Cache-Control": "no-store",
-      Pragma: "no-cache"
-    }
+    })
   });
 }

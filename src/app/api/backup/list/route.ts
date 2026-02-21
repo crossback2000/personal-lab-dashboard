@@ -1,31 +1,20 @@
-import { NextResponse } from "next/server";
-import { getBackupRetentionPolicy, pruneBackups } from "@/lib/backup";
-import { requireApiUser } from "@/lib/auth";
-import { checkRateLimit, defaultRateLimitPolicies } from "@/lib/request-security";
+import { getBackupRetentionPolicy, listBackups } from "@/lib/backup";
+import { defaultRateLimitPolicies } from "@/lib/request-security";
+import { guardApiRequest, jsonNoStore } from "@/lib/http/guard";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const limitResult = checkRateLimit(request, defaultRateLimitPolicies().backupList);
-  if (!limitResult.ok) {
-    return NextResponse.json(
-      { ok: false, message: "Too many requests. Please retry later." },
-      {
-        status: 429,
-        headers: {
-          "Retry-After": String(limitResult.retryAfterSec)
-        }
-      }
-    );
+  const guard = await guardApiRequest(request, {
+    auth: "api-user",
+    sameOrigin: true,
+    rateLimitPolicy: defaultRateLimitPolicies().backupList
+  });
+  if (!guard.ok) {
+    return guard.response;
   }
 
-  try {
-    await requireApiUser();
-  } catch {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { backups } = await pruneBackups();
+  const backups = await listBackups();
   const retention = getBackupRetentionPolicy();
-  return NextResponse.json({ backups, retention });
+  return jsonNoStore({ backups, retention });
 }

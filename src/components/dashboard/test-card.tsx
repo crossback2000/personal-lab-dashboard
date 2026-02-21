@@ -19,8 +19,11 @@ export function TestCard({
   const status = observationStatus(latest);
 
   return (
-    <Link href={`/dashboard/tests/${test.id}`}>
-      <Card className="h-full transition hover:-translate-y-0.5 hover:shadow-md">
+    <Link
+      href={`/dashboard/tests/${test.id}`}
+      className="group block h-full rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+    >
+      <Card className="h-full transition group-hover:-translate-y-0.5 group-hover:shadow-md">
         <CardHeader>
           <div className="flex items-start justify-between gap-2">
             <CardTitle className="text-base">
@@ -51,6 +54,10 @@ export function TestCard({
           </p>
 
           <Sparkline values={sparklineValues} />
+
+          <p className="text-xs text-muted-foreground">
+            최근 {Math.min(sparklineValues.length, 10)}회 추이
+          </p>
 
           <p className="text-xs text-muted-foreground">
             최신일: {latest ? format(new Date(latest.observed_at), "yyyy-MM-dd") : "-"}

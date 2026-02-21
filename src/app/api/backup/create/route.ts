@@ -1,37 +1,22 @@
-import { NextResponse } from "next/server";
 import { createBackupSnapshot } from "@/lib/backup";
-import { requireApiUser } from "@/lib/auth";
-import { checkRateLimit, defaultRateLimitPolicies, isSameOriginRequest } from "@/lib/request-security";
+import { defaultRateLimitPolicies } from "@/lib/request-security";
+import { guardApiRequest, jsonNoStore } from "@/lib/http/guard";
 import { isRestoreWriteLocked } from "@/lib/restore-lock";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  if (!isSameOriginRequest(request)) {
-    return NextResponse.json({ ok: false, message: "Forbidden origin" }, { status: 403 });
-  }
-
-  const limitResult = checkRateLimit(request, defaultRateLimitPolicies().backupCreate);
-  if (!limitResult.ok) {
-    return NextResponse.json(
-      { ok: false, message: "Too many requests. Please retry later." },
-      {
-        status: 429,
-        headers: {
-          "Retry-After": String(limitResult.retryAfterSec)
-        }
-      }
-    );
-  }
-
-  try {
-    await requireApiUser();
-  } catch {
-    return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
+  const guard = await guardApiRequest(request, {
+    auth: "api-user",
+    sameOrigin: true,
+    rateLimitPolicy: defaultRateLimitPolicies().backupCreate
+  });
+  if (!guard.ok) {
+    return guard.response;
   }
 
   if (isRestoreWriteLocked()) {
-    return NextResponse.json(
+    return jsonNoStore(
       { ok: false, message: "현재 복원 작업 중입니다. 잠시 후 다시 시도해 주세요." },
       { status: 423 }
     );
@@ -39,10 +24,11 @@ export async function POST(request: Request) {
 
   try {
     const backup = await createBackupSnapshot();
-    return NextResponse.json({ ok: true, backup: { fileName: backup.fileName } });
+    return jsonNoStore({ ok: true, backup: { fileName: backup.fileName } });
   } catch (error) {
-    return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "백업 생성 실패" },
+    console.error("[backup.create] failed", error);
+    return jsonNoStore(
+      { ok: false, message: "백업 생성 중 오류가 발생했습니다." },
       { status: 500 }
     );
   }

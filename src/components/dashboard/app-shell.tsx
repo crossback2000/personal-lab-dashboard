@@ -3,6 +3,7 @@ import { buttonStyles } from "@/components/ui/button";
 
 const navLinks = [
   { href: "/dashboard", label: "대시보드" },
+  { href: "/dashboard/normalized", label: "Normalized View" },
   { href: "/dashboard/import", label: "데이터 입력" },
   { href: "/dashboard/table", label: "테이블" },
   { href: "/dashboard/backups", label: "백업/복원" }

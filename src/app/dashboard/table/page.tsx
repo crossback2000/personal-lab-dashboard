@@ -1,13 +1,13 @@
 import { ObservationsTable } from "@/components/dashboard/observations-table";
 import { requireUser } from "@/lib/auth";
-import { getObservations, getTests } from "@/lib/data/repository";
+import { getObservationsLite, getTests } from "@/lib/data/repository";
 
 export default async function TablePage() {
   await requireUser();
 
   const [tests, observations] = await Promise.all([
     getTests(),
-    getObservations()
+    getObservationsLite()
   ]);
 
   const testMap = new Map(tests.map((test) => [test.id, test]));
