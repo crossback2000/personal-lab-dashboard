@@ -1,0 +1,4 @@
+test_name,observed_at,value,unit,ref_low,ref_high,flag
+Hemoglobin(혈색소),2025-12-01,13.5,g/dL,13,17,
+Hemoglobin(혈색소),2025-11-01,12.8L,g/dL,13,17,L
+Urine SG(요비중),2025-12-01,1.032H,,1.005,1.030,H

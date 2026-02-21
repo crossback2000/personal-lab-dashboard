@@ -1,0 +1,24 @@
+services:
+  app:
+    build: .
+    container_name: personal-lab-dashboard
+    ports:
+      - "3000:3000"
+    environment:
+      ACCESS_MODE: ${ACCESS_MODE:-cloudflare}
+      ACCESS_SINGLE_USER_EMAIL: ${ACCESS_SINGLE_USER_EMAIL:-}
+      REQUIRE_CLOUDFLARE_IN_PRODUCTION: ${REQUIRE_CLOUDFLARE_IN_PRODUCTION:-true}
+      CLOUDFLARE_ACCESS_TEAM_DOMAIN: ${CLOUDFLARE_ACCESS_TEAM_DOMAIN:-}
+      CLOUDFLARE_ACCESS_AUD: ${CLOUDFLARE_ACCESS_AUD:-}
+      CLOUDFLARE_ACCESS_ISSUER: ${CLOUDFLARE_ACCESS_ISSUER:-}
+      DB_PATH: /data/lab-dashboard.sqlite
+      BACKUP_DIR: /data/backups
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
+      BACKUP_MAX_FILES: ${BACKUP_MAX_FILES:-30}
+      RESTORE_UPLOAD_MAX_BYTES: ${RESTORE_UPLOAD_MAX_BYTES:-104857600}
+      RESTORE_MAX_PREPARED: ${RESTORE_MAX_PREPARED:-5}
+      IMPORT_MAX_BYTES: ${IMPORT_MAX_BYTES:-10485760}
+      IMPORT_MAX_ROWS: ${IMPORT_MAX_ROWS:-100000}
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

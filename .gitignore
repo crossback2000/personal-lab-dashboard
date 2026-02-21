@@ -1,0 +1,28 @@
+# Dependencies / build artifacts
+node_modules/
+.next/
+.next.bak*/
+coverage/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs / cache
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+tsconfig.tsbuildinfo
+
+# Local DB and backups (can contain personal health data)
+data/*.sqlite
+data/*.sqlite-*
+data/backups/*
+!data/.gitkeep
+!data/backups/.gitkeep
+
+# Misc
+.DS_Store
