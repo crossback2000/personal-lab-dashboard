@@ -19,6 +19,14 @@ interface RestoreValidation {
   fileName: string;
   fileSize: number;
   integrityCheck: string;
+  rowCounts: {
+    tests: number;
+    observations: number;
+  };
+  observedRange: {
+    min: string | null;
+    max: string | null;
+  };
   requiredTables: {
     tests: boolean;
     observations: boolean;
@@ -342,6 +350,13 @@ export function BackupControls() {
             <p>
               누락 컬럼: tests[{restoreValidation.missingColumns.tests.join(", ") || "-"}], observations[
               {restoreValidation.missingColumns.observations.join(", ") || "-"}]
+            </p>
+            <p>
+              데이터 건수: tests={(restoreValidation.rowCounts?.tests ?? 0).toLocaleString("en-US")}, observations=
+              {(restoreValidation.rowCounts?.observations ?? 0).toLocaleString("en-US")}
+            </p>
+            <p>
+              관측 기간: {restoreValidation.observedRange?.min ?? "-"} ~ {restoreValidation.observedRange?.max ?? "-"}
             </p>
           </div>
         ) : null}

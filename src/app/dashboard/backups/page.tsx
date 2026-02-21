@@ -9,7 +9,7 @@ export default async function BackupsPage() {
       <div>
         <h2 className="text-2xl font-semibold">백업 / 복원</h2>
         <p className="text-sm text-muted-foreground">
-          백업 생성은 현재 SQLite DB 전체 파일을 복사합니다. 복원 실행 시 업로드한 DB로 전체 교체됩니다.
+          백업 생성은 SQLite 스냅샷 백업으로 생성되며, 복원 실행 시 업로드한 DB로 전체 교체됩니다.
         </p>
       </div>
 

@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getDbPath } from "@/lib/db/client";
+import { getDb, getDbPath } from "@/lib/db/client";
 
 type BackupMeta = {
   file: string;
@@ -25,6 +25,27 @@ function normalizePrefix(input?: string) {
 
 export function getBackupDir() {
   return process.env.BACKUP_DIR || path.join(path.dirname(getDbPath()), "backups");
+}
+
+async function safeUnlink(filePath: string) {
+  try {
+    await fs.unlink(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+
+async function createConsistentSnapshot(destinationPath: string) {
+  await safeUnlink(destinationPath);
+  const db = getDb();
+  try {
+    await db.backup(destinationPath);
+  } catch (error) {
+    await safeUnlink(destinationPath);
+    throw error;
+  }
 }
 
 function parseKeepDays() {
@@ -129,18 +150,35 @@ export async function pruneBackups() {
 }
 
 export async function createBackupSnapshot(prefix?: string) {
-  const dbPath = getDbPath();
   const backupDir = getBackupDir();
   await fs.mkdir(backupDir, { recursive: true });
 
   const fileName = `${normalizePrefix(prefix)}-${timestamp()}.sqlite`;
   const destination = path.join(backupDir, fileName);
 
-  await fs.copyFile(dbPath, destination);
+  await createConsistentSnapshot(destination);
   await pruneBackups();
 
   return {
     fileName,
     fullPath: destination
+  };
+}
+
+export async function createTemporaryBackupSnapshot(prefix?: string) {
+  const backupDir = getBackupDir();
+  const tempDir = path.join(backupDir, ".tmp");
+  await fs.mkdir(tempDir, { recursive: true });
+
+  const fileName = `${normalizePrefix(prefix || "db-download")}-${timestamp()}.sqlite`;
+  const destination = path.join(tempDir, fileName);
+  await createConsistentSnapshot(destination);
+
+  return {
+    fileName,
+    fullPath: destination,
+    cleanup: async () => {
+      await safeUnlink(destination);
+    }
   };
 }

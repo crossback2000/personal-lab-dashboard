@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { requireApiUser } from "@/lib/auth";
+import { createTemporaryBackupSnapshot } from "@/lib/backup";
 import { getDbPath } from "@/lib/db/client";
 import { checkRateLimit, defaultRateLimitPolicies } from "@/lib/request-security";
 
@@ -32,8 +33,17 @@ export async function GET(request: Request) {
     .basename(dbPath)
     .replace(/[^a-zA-Z0-9._-]/g, "_");
 
+  let snapshot:
+    | {
+        fileName: string;
+        fullPath: string;
+        cleanup: () => Promise<void>;
+      }
+    | null = null;
+
   try {
-    const file = await fs.readFile(dbPath);
+    snapshot = await createTemporaryBackupSnapshot("download-lab-dashboard");
+    const file = await fs.readFile(snapshot.fullPath);
     return new NextResponse(file, {
       status: 200,
       headers: {
@@ -43,7 +53,13 @@ export async function GET(request: Request) {
         Pragma: "no-cache"
       }
     });
-  } catch {
-    return NextResponse.json({ error: "DB 파일을 찾을 수 없습니다." }, { status: 404 });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "DB 스냅샷을 생성하지 못했습니다.";
+    return NextResponse.json({ error: message }, { status: 500 });
+  } finally {
+    if (snapshot) {
+      await snapshot.cleanup();
+    }
   }
 }

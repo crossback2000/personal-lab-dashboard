@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import Database from "better-sqlite3";
 
 const dbPath = process.env.DB_PATH || path.join(process.cwd(), "data", "lab-dashboard.sqlite");
 const backupDir = process.env.BACKUP_DIR || path.join(path.dirname(dbPath), "backups");
@@ -15,7 +16,17 @@ fs.mkdirSync(backupDir, { recursive: true });
 const fileName = `lab-dashboard-${new Date().toISOString().replace(/[:.]/g, "-")}.sqlite`;
 const backupPath = path.join(backupDir, fileName);
 
-fs.copyFileSync(dbPath, backupPath);
+const db = new Database(dbPath, { fileMustExist: true });
+try {
+  await db.backup(backupPath);
+} catch (error) {
+  if (fs.existsSync(backupPath)) {
+    fs.unlinkSync(backupPath);
+  }
+  throw error;
+} finally {
+  db.close();
+}
 
 const files = fs
   .readdirSync(backupDir)

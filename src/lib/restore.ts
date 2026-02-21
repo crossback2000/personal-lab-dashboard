@@ -55,6 +55,14 @@ export interface RestoreValidation {
   fileName: string;
   fileSize: number;
   integrityCheck: string;
+  rowCounts: {
+    tests: number;
+    observations: number;
+  };
+  observedRange: {
+    min: string | null;
+    max: string | null;
+  };
   requiredTables: {
     tests: boolean;
     observations: boolean;
@@ -204,6 +212,17 @@ function getMissingColumns(required: string[], actual: string[]) {
   return required.filter((column) => !set.has(column));
 }
 
+function toSafeCount(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.trunc(value));
+  }
+  if (typeof value === "bigint") {
+    const asNumber = Number(value);
+    return Number.isFinite(asNumber) ? Math.max(0, Math.trunc(asNumber)) : 0;
+  }
+  return 0;
+}
+
 function getTableColumns(db: Database.Database, tableName: string) {
   const rows = db
     .prepare(`pragma table_info(${tableName})`)
@@ -218,6 +237,8 @@ function toValidationMessage(validation: {
   hasObservationsTable: boolean;
   missingTestColumns: string[];
   missingObservationColumns: string[];
+  testRowCount: number;
+  observationRowCount: number;
 }) {
   if (!validation.headerOk) {
     return "SQLite DB 파일 형식이 아닙니다.";
@@ -238,6 +259,14 @@ function toValidationMessage(validation: {
     return "필수 컬럼이 누락되어 있습니다.";
   }
 
+  if (validation.testRowCount === 0 && validation.observationRowCount === 0) {
+    return "복원 가능한 DB 파일입니다. 단, tests/observations 데이터가 0건입니다.";
+  }
+
+  if (validation.observationRowCount === 0) {
+    return "복원 가능한 DB 파일입니다. 단, observations 데이터가 0건입니다.";
+  }
+
   return "복원 가능한 DB 파일입니다.";
 }
 
@@ -256,6 +285,14 @@ export async function validateRestoreFile(params: {
         fileName,
         fileSize: 0,
         integrityCheck: "not-a-file",
+        rowCounts: {
+          tests: 0,
+          observations: 0
+        },
+        observedRange: {
+          min: null,
+          max: null
+        },
         requiredTables: { tests: false, observations: false },
         missingColumns: {
           tests: [...REQUIRED_TEST_COLUMNS],
@@ -271,6 +308,14 @@ export async function validateRestoreFile(params: {
       fileName,
       fileSize: 0,
       integrityCheck: "stat-failed",
+      rowCounts: {
+        tests: 0,
+        observations: 0
+      },
+      observedRange: {
+        min: null,
+        max: null
+      },
       requiredTables: { tests: false, observations: false },
       missingColumns: {
         tests: [...REQUIRED_TEST_COLUMNS],
@@ -289,6 +334,10 @@ export async function validateRestoreFile(params: {
   let hasObservationsTable = false;
   let missingTestColumns = [...REQUIRED_TEST_COLUMNS];
   let missingObservationColumns = [...REQUIRED_OBSERVATION_COLUMNS];
+  let testRowCount = 0;
+  let observationRowCount = 0;
+  let observedRangeMin: string | null = null;
+  let observedRangeMax: string | null = null;
 
   for (let attempt = 0; attempt < VALIDATE_OPEN_RETRY_COUNT; attempt += 1) {
     try {
@@ -317,11 +366,34 @@ export async function validateRestoreFile(params: {
       if (hasTestsTable) {
         const columns = getTableColumns(db, "tests");
         missingTestColumns = getMissingColumns(REQUIRED_TEST_COLUMNS, columns);
+        const row = db.prepare("select count(*) as count from tests").get() as { count?: unknown } | undefined;
+        testRowCount = toSafeCount(row?.count);
       }
 
       if (hasObservationsTable) {
         const columns = getTableColumns(db, "observations");
         missingObservationColumns = getMissingColumns(REQUIRED_OBSERVATION_COLUMNS, columns);
+        const stats = db
+          .prepare(
+            `
+            select
+              count(*) as count,
+              min(observed_at) as min_observed_at,
+              max(observed_at) as max_observed_at
+            from observations
+          `
+          )
+          .get() as
+          | {
+              count?: unknown;
+              min_observed_at?: unknown;
+              max_observed_at?: unknown;
+            }
+          | undefined;
+
+        observationRowCount = toSafeCount(stats?.count);
+        observedRangeMin = typeof stats?.min_observed_at === "string" ? stats.min_observed_at : null;
+        observedRangeMax = typeof stats?.max_observed_at === "string" ? stats.max_observed_at : null;
       }
 
       break;
@@ -343,7 +415,9 @@ export async function validateRestoreFile(params: {
     hasTestsTable,
     hasObservationsTable,
     missingTestColumns,
-    missingObservationColumns
+    missingObservationColumns,
+    testRowCount,
+    observationRowCount
   });
 
   const ok =
@@ -359,6 +433,14 @@ export async function validateRestoreFile(params: {
     fileName,
     fileSize,
     integrityCheck,
+    rowCounts: {
+      tests: testRowCount,
+      observations: observationRowCount
+    },
+    observedRange: {
+      min: observedRangeMin,
+      max: observedRangeMax
+    },
     requiredTables: {
       tests: hasTestsTable,
       observations: hasObservationsTable
