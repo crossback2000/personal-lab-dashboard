@@ -3,10 +3,6 @@ import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db/client";
 import type { PeriodOption } from "@/lib/constants";
 import type { ParsedObservationInput } from "@/lib/import/parser";
-import {
-  normalizeObservationValue,
-  type NormalizedSeries
-} from "@/lib/normalization";
 import type { LabCategory, ObservationRow, TestRow } from "@/types/database";
 
 type DbTestRow = Omit<TestRow, "category" | "created_at" | "updated_at"> & {
@@ -26,17 +22,6 @@ export interface DashboardCardData {
   latest: ObservationRow | null;
   sparklineValues: number[];
 }
-
-type NormalizedSeriesQueryRow = {
-  test_id: string;
-  observed_at: string;
-  value_numeric: number;
-  ref_low: number;
-  ref_high: number;
-  name_en: string;
-  name_ko: string | null;
-  category: string;
-};
 
 type LatestObservationJoinedRow = {
   test_id: string;
@@ -399,126 +384,6 @@ export async function getDashboardCards(options?: { sparklinePoints?: number }) 
     latest: latestMap.get(test.id) ?? null,
     sparklineValues: sparklineMap.get(test.id) ?? []
   } satisfies DashboardCardData));
-}
-
-export async function getNormalizedSeries(options?: {
-  period?: PeriodOption;
-  maxPointsPerTest?: number;
-}) {
-  const db = getDb();
-  const period = options?.period ?? "all";
-  const maxPointsPerTest = Math.max(5, Math.min(200, options?.maxPointsPerTest ?? 40));
-  const { where, values } = buildObservationFilter({ period, tableAlias: "o" });
-
-  const filterClauses = [where.replace(/^where\s+/i, "").trim()]
-    .filter(Boolean)
-    .concat([
-      "o.value_numeric is not null",
-      "o.ref_low is not null",
-      "o.ref_high is not null",
-      "o.ref_high > o.ref_low"
-    ]);
-
-  const rows = db
-    .prepare(
-      `
-      select
-        ranked.test_id,
-        ranked.observed_at,
-        ranked.value_numeric,
-        ranked.ref_low,
-        ranked.ref_high,
-        ranked.name_en,
-        ranked.name_ko,
-        ranked.category
-      from (
-        select
-          o.test_id,
-          o.observed_at,
-          o.value_numeric,
-          o.ref_low,
-          o.ref_high,
-          t.name_en,
-          t.name_ko,
-          t.category,
-          row_number() over (
-            partition by o.test_id
-            order by o.observed_at desc
-          ) as row_num
-        from observations o
-        join tests t on t.id = o.test_id
-        where ${filterClauses.join(" and ")}
-      ) ranked
-      where ranked.row_num <= ?
-      order by ranked.test_id asc, ranked.observed_at desc
-    `
-    )
-    .all(...values, maxPointsPerTest) as NormalizedSeriesQueryRow[];
-
-  const grouped = new Map<
-    string,
-    {
-      testId: string;
-      label: string;
-      labelSub: string | null;
-      category: LabCategory;
-      pointsDesc: Array<{ observedAt: string; value: number }>;
-    }
-  >();
-
-  for (const row of rows) {
-    const normalizedValue = normalizeObservationValue({
-      value_numeric: row.value_numeric,
-      ref_low: row.ref_low,
-      ref_high: row.ref_high
-    });
-
-    if (normalizedValue === null) {
-      continue;
-    }
-
-    const entry =
-      grouped.get(row.test_id) ??
-      {
-        testId: row.test_id,
-        label: row.name_ko || row.name_en,
-        labelSub: row.name_ko && row.name_en ? row.name_en : null,
-        category: normalizeCategory(row.category),
-        pointsDesc: []
-      };
-
-    entry.pointsDesc.push({
-      observedAt: row.observed_at,
-      value: normalizedValue
-    });
-
-    grouped.set(row.test_id, entry);
-  }
-
-  const series: NormalizedSeries[] = [];
-
-  for (const entry of grouped.values()) {
-    const latest = entry.pointsDesc[0];
-    if (!latest) {
-      continue;
-    }
-
-    series.push({
-      testId: entry.testId,
-      label: entry.label,
-      labelSub: entry.labelSub,
-      category: entry.category,
-      latestObservedAt: latest.observedAt,
-      latestValue: latest.value,
-      points: [...entry.pointsDesc].reverse()
-    });
-  }
-
-  return series.sort(
-    (a, b) =>
-      new Date(b.latestObservedAt).getTime() -
-      new Date(a.latestObservedAt).getTime()
-  );
 }
 
 async function findExistingTestByName(testNameEn: string, testNameKo: string | null) {
