@@ -547,6 +547,7 @@ export async function cleanupExpiredPreparedRestores() {
   }
 
   await cleanupRestoreTempArtifacts();
+  await cleanupStaleRestoreSwapArtifacts(getDbPath());
   await Promise.all(deletions);
 }
 
