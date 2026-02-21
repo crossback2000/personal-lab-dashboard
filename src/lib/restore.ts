@@ -15,6 +15,8 @@ const SQLITE_MAGIC = "SQLite format 3\u0000";
 const PREPARED_TOKEN_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_RESTORE_MAX_PREPARED = 5;
 const DEFAULT_RESTORE_UPLOAD_MAX_BYTES = 100 * 1024 * 1024;
+const VALIDATE_OPEN_RETRY_COUNT = 3;
+const VALIDATE_OPEN_RETRY_BASE_MS = 40;
 
 const REQUIRED_TEST_COLUMNS = [
   "id",
@@ -149,6 +151,20 @@ async function safeUnlink(filePath: string) {
   }
 }
 
+function normalizeDbError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return "";
+  }
+
+  return error.message.replace(/\s+/g, " ").trim().slice(0, 160);
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 async function removeWalArtifacts(dbPath: string) {
   await safeUnlink(`${dbPath}-wal`);
   await safeUnlink(`${dbPath}-shm`);
@@ -167,6 +183,20 @@ async function readSqliteHeader(filePath: string) {
   } finally {
     await handle.close();
   }
+}
+
+async function replaceFileAtomically(sourcePath: string, targetPath: string) {
+  try {
+    await fs.rename(sourcePath, targetPath);
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EXDEV") {
+      throw error;
+    }
+  }
+
+  await fs.copyFile(sourcePath, targetPath);
+  await safeUnlink(sourcePath);
 }
 
 function getMissingColumns(required: string[], actual: string[]) {
@@ -260,42 +290,51 @@ export async function validateRestoreFile(params: {
   let missingTestColumns = [...REQUIRED_TEST_COLUMNS];
   let missingObservationColumns = [...REQUIRED_OBSERVATION_COLUMNS];
 
-  try {
-    db = new Database(filePath, { readonly: true, fileMustExist: true });
+  for (let attempt = 0; attempt < VALIDATE_OPEN_RETRY_COUNT; attempt += 1) {
+    try {
+      db = new Database(filePath, { readonly: true, fileMustExist: true });
 
-    const integrityRow = db.prepare("PRAGMA integrity_check").get() as
-      | Record<string, unknown>
-      | undefined;
-    const firstValue = integrityRow ? Object.values(integrityRow)[0] : undefined;
-    integrityCheck = typeof firstValue === "string" ? firstValue : "integrity-check-failed";
+      const integrityRow = db.prepare("PRAGMA integrity_check").get() as
+        | Record<string, unknown>
+        | undefined;
+      const firstValue = integrityRow ? Object.values(integrityRow)[0] : undefined;
+      integrityCheck = typeof firstValue === "string" ? firstValue : "integrity-check-failed";
 
-    const tableRows = db
-      .prepare(
+      const tableRows = db
+        .prepare(
+          `
+          select name
+          from sqlite_master
+          where type = 'table' and name in ('tests', 'observations')
         `
-        select name
-        from sqlite_master
-        where type = 'table' and name in ('tests', 'observations')
-      `
-      )
-      .all() as Array<{ name: string }>;
+        )
+        .all() as Array<{ name: string }>;
 
-    const tableNames = new Set(tableRows.map((row) => row.name));
-    hasTestsTable = tableNames.has("tests");
-    hasObservationsTable = tableNames.has("observations");
+      const tableNames = new Set(tableRows.map((row) => row.name));
+      hasTestsTable = tableNames.has("tests");
+      hasObservationsTable = tableNames.has("observations");
 
-    if (hasTestsTable) {
-      const columns = getTableColumns(db, "tests");
-      missingTestColumns = getMissingColumns(REQUIRED_TEST_COLUMNS, columns);
+      if (hasTestsTable) {
+        const columns = getTableColumns(db, "tests");
+        missingTestColumns = getMissingColumns(REQUIRED_TEST_COLUMNS, columns);
+      }
+
+      if (hasObservationsTable) {
+        const columns = getTableColumns(db, "observations");
+        missingObservationColumns = getMissingColumns(REQUIRED_OBSERVATION_COLUMNS, columns);
+      }
+
+      break;
+    } catch (error) {
+      const reason = normalizeDbError(error);
+      integrityCheck = reason ? `open-failed:${reason}` : "open-failed";
+      if (attempt < VALIDATE_OPEN_RETRY_COUNT - 1) {
+        await sleep(VALIDATE_OPEN_RETRY_BASE_MS * (attempt + 1));
+      }
+    } finally {
+      db?.close();
+      db = null;
     }
-
-    if (hasObservationsTable) {
-      const columns = getTableColumns(db, "observations");
-      missingObservationColumns = getMissingColumns(REQUIRED_OBSERVATION_COLUMNS, columns);
-    }
-  } catch {
-    integrityCheck = "open-failed";
-  } finally {
-    db?.close();
   }
 
   const message = toValidationMessage({
@@ -426,6 +465,7 @@ export async function commitPreparedRestore(restoreToken: string) {
   const startedAt = startRestoreRun();
 
   const dbPath = getDbPath();
+  let stagedSwapPath: string | null = null;
   let snapshot:
     | {
         fileName: string;
@@ -446,7 +486,20 @@ export async function commitPreparedRestore(restoreToken: string) {
     snapshot = await createBackupSnapshot("pre-restore-lab-dashboard");
 
     closeDb();
-    await fs.copyFile(prepared.tempPath, dbPath);
+    stagedSwapPath = path.join(path.dirname(dbPath), `.restore-${randomUUID()}.sqlite`);
+    await fs.copyFile(prepared.tempPath, stagedSwapPath);
+    await removeWalArtifacts(stagedSwapPath);
+
+    const stagedValidation = await validateRestoreFile({
+      filePath: stagedSwapPath,
+      fileName: path.basename(stagedSwapPath)
+    });
+    if (!stagedValidation.ok) {
+      throw new Error(`스테이징 DB 검증 실패: ${stagedValidation.message}`);
+    }
+
+    await replaceFileAtomically(stagedSwapPath, dbPath);
+    stagedSwapPath = null;
     await removeWalArtifacts(dbPath);
 
     const restoredValidation = await validateRestoreFile({
@@ -509,6 +562,9 @@ export async function commitPreparedRestore(restoreToken: string) {
     });
   } finally {
     setRestoreWriteLock(false);
+    if (stagedSwapPath) {
+      await safeUnlink(stagedSwapPath);
+    }
     await safeUnlink(prepared.tempPath);
   }
 }
