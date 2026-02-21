@@ -17,6 +17,7 @@ const DEFAULT_RESTORE_MAX_PREPARED = 5;
 const DEFAULT_RESTORE_UPLOAD_MAX_BYTES = 100 * 1024 * 1024;
 const VALIDATE_OPEN_RETRY_COUNT = 3;
 const VALIDATE_OPEN_RETRY_BASE_MS = 40;
+const RESTORE_SWAP_STALE_TTL_MS = 30 * 60 * 1000;
 
 const REQUIRED_TEST_COLUMNS = [
   "id",
@@ -176,6 +177,86 @@ function sleep(ms: number) {
 async function removeWalArtifacts(dbPath: string) {
   await safeUnlink(`${dbPath}-wal`);
   await safeUnlink(`${dbPath}-shm`);
+}
+
+async function removeSqliteArtifacts(dbPath: string) {
+  await removeWalArtifacts(dbPath);
+  await safeUnlink(dbPath);
+}
+
+async function cleanupRestoreTempArtifacts() {
+  const tempDir = getRestoreTempDir();
+  let files: string[] = [];
+  try {
+    files = await fs.readdir(tempDir);
+  } catch {
+    return;
+  }
+
+  const now = Date.now();
+  const fileSet = new Set(files);
+  const deletions: Promise<void>[] = [];
+
+  for (const file of files) {
+    const fullPath = path.join(tempDir, file);
+
+    if (file.endsWith(".sqlite-wal") || file.endsWith(".sqlite-shm")) {
+      const baseName = file.replace(/-(wal|shm)$/, "");
+      if (!fileSet.has(baseName)) {
+        deletions.push(safeUnlink(fullPath));
+      }
+      continue;
+    }
+
+    if (!file.endsWith(".sqlite")) {
+      continue;
+    }
+
+    try {
+      const stat = await fs.stat(fullPath);
+      if (now - stat.mtimeMs > PREPARED_TOKEN_TTL_MS) {
+        deletions.push(removeSqliteArtifacts(fullPath));
+      }
+    } catch {
+      // ignore stat race
+    }
+  }
+
+  await Promise.all(deletions);
+}
+
+function isRestoreSwapArtifact(fileName: string) {
+  return /^\.restore-[a-f0-9-]+\.sqlite(?:-(?:wal|shm))?$/i.test(fileName);
+}
+
+async function cleanupStaleRestoreSwapArtifacts(dbPath: string) {
+  const dataDir = path.dirname(dbPath);
+  let files: string[] = [];
+  try {
+    files = await fs.readdir(dataDir);
+  } catch {
+    return;
+  }
+
+  const now = Date.now();
+  const deletions: Promise<void>[] = [];
+  for (const file of files) {
+    if (!isRestoreSwapArtifact(file)) {
+      continue;
+    }
+
+    const fullPath = path.join(dataDir, file);
+    try {
+      const stat = await fs.stat(fullPath);
+      if (now - stat.mtimeMs > RESTORE_SWAP_STALE_TTL_MS) {
+        deletions.push(safeUnlink(fullPath));
+      }
+    } catch {
+      // ignore stat race
+    }
+  }
+
+  await Promise.all(deletions);
 }
 
 async function readSqliteHeader(filePath: string) {
@@ -461,10 +542,11 @@ export async function cleanupExpiredPreparedRestores() {
     const uploadedAt = new Date(entry.uploadedAt).getTime();
     if (Number.isNaN(uploadedAt) || now - uploadedAt > PREPARED_TOKEN_TTL_MS) {
       preparedRestores.delete(token);
-      deletions.push(safeUnlink(entry.tempPath));
+      deletions.push(removeSqliteArtifacts(entry.tempPath));
     }
   }
 
+  await cleanupRestoreTempArtifacts();
   await Promise.all(deletions);
 }
 
@@ -503,9 +585,11 @@ export async function prepareRestoreUpload(params: {
   });
 
   if (!validation.ok) {
-    await safeUnlink(tempPath);
+    await removeSqliteArtifacts(tempPath);
     throw new RestoreValidationError(validation);
   }
+
+  await removeWalArtifacts(tempPath);
 
   preparedRestores.set(token, {
     token,
@@ -548,6 +632,7 @@ export async function commitPreparedRestore(restoreToken: string) {
 
   const dbPath = getDbPath();
   let stagedSwapPath: string | null = null;
+  let stagedSwapArtifactsPath: string | null = null;
   let snapshot:
     | {
         fileName: string;
@@ -557,6 +642,8 @@ export async function commitPreparedRestore(restoreToken: string) {
 
   setRestoreWriteLock(true);
   try {
+    await cleanupStaleRestoreSwapArtifacts(dbPath);
+
     const validation = await validateRestoreFile({
       filePath: prepared.tempPath,
       fileName: prepared.fileName
@@ -564,11 +651,13 @@ export async function commitPreparedRestore(restoreToken: string) {
     if (!validation.ok) {
       throw new RestoreValidationError(validation);
     }
+    await removeWalArtifacts(prepared.tempPath);
 
     snapshot = await createBackupSnapshot("pre-restore-lab-dashboard");
 
     closeDb();
     stagedSwapPath = path.join(path.dirname(dbPath), `.restore-${randomUUID()}.sqlite`);
+    stagedSwapArtifactsPath = stagedSwapPath;
     await fs.copyFile(prepared.tempPath, stagedSwapPath);
     await removeWalArtifacts(stagedSwapPath);
 
@@ -645,9 +734,11 @@ export async function commitPreparedRestore(restoreToken: string) {
   } finally {
     setRestoreWriteLock(false);
     if (stagedSwapPath) {
-      await safeUnlink(stagedSwapPath);
+      await removeSqliteArtifacts(stagedSwapPath);
+    } else if (stagedSwapArtifactsPath) {
+      await removeWalArtifacts(stagedSwapArtifactsPath);
     }
-    await safeUnlink(prepared.tempPath);
+    await removeSqliteArtifacts(prepared.tempPath);
   }
 }
 

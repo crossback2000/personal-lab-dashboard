@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRestoreAdmin } from "@/lib/auth";
 import { checkRateLimit, defaultRateLimitPolicies } from "@/lib/request-security";
-import { getPreparedRestoreCount } from "@/lib/restore";
+import { cleanupExpiredPreparedRestores, getPreparedRestoreCount } from "@/lib/restore";
 import { getRestoreStatus } from "@/lib/restore-lock";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +32,8 @@ export async function GET(request: Request) {
   } catch (error) {
     return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: authErrorStatus(error) });
   }
+
+  await cleanupExpiredPreparedRestores();
 
   const status = getRestoreStatus();
   return NextResponse.json({

@@ -13,6 +13,8 @@ type BackupMetaInternal = BackupMeta & {
   modifiedAtMs: number;
 };
 
+const TEMP_SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000;
+
 function timestamp() {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
@@ -37,12 +39,62 @@ async function safeUnlink(filePath: string) {
   }
 }
 
+async function removeWalArtifacts(basePath: string) {
+  await safeUnlink(`${basePath}-wal`);
+  await safeUnlink(`${basePath}-shm`);
+}
+
+async function cleanupBackupAuxiliaryFiles(backupDir: string) {
+  const now = Date.now();
+  let files: string[] = [];
+  try {
+    files = await fs.readdir(backupDir);
+  } catch {
+    return;
+  }
+
+  const tasks: Promise<void>[] = [];
+  for (const file of files) {
+    if (file.endsWith(".sqlite-wal") || file.endsWith(".sqlite-shm")) {
+      tasks.push(safeUnlink(path.join(backupDir, file)));
+      continue;
+    }
+  }
+
+  const tempDir = path.join(backupDir, ".tmp");
+  let tempFiles: string[] = [];
+  try {
+    tempFiles = await fs.readdir(tempDir);
+  } catch {
+    tempFiles = [];
+  }
+
+  for (const file of tempFiles) {
+    if (!file.endsWith(".sqlite") && !file.endsWith(".sqlite-wal") && !file.endsWith(".sqlite-shm")) {
+      continue;
+    }
+    const fullPath = path.join(tempDir, file);
+    try {
+      const stat = await fs.stat(fullPath);
+      if (now - stat.mtimeMs >= TEMP_SNAPSHOT_TTL_MS) {
+        tasks.push(safeUnlink(fullPath));
+      }
+    } catch {
+      // ignore stat race
+    }
+  }
+
+  await Promise.all(tasks);
+}
+
 async function createConsistentSnapshot(destinationPath: string) {
   await safeUnlink(destinationPath);
   const db = getDb();
   try {
     await db.backup(destinationPath);
+    await removeWalArtifacts(destinationPath);
   } catch (error) {
+    await removeWalArtifacts(destinationPath);
     await safeUnlink(destinationPath);
     throw error;
   }
@@ -143,6 +195,8 @@ export async function pruneBackups() {
     })
   );
 
+  await cleanupBackupAuxiliaryFiles(getBackupDir());
+
   return {
     deletedCount: deletedPaths.length,
     backups: kept.map(toBackupMeta)
@@ -178,6 +232,7 @@ export async function createTemporaryBackupSnapshot(prefix?: string) {
     fileName,
     fullPath: destination,
     cleanup: async () => {
+      await removeWalArtifacts(destination);
       await safeUnlink(destination);
     }
   };
