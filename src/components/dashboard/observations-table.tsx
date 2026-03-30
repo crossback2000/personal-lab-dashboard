@@ -1,9 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useActionState } from "react";
+import { useFormStatus } from "react-dom";
+import { deleteObservationAction } from "@/app/dashboard/actions";
 import type { ObservationRow, TestRow } from "@/types/database";
 import { formatNumber } from "@/lib/utils";
 import { resolveObservationFlag } from "@/lib/status";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import {
@@ -18,6 +22,53 @@ import {
 type Row = ObservationRow & {
   test: Pick<TestRow, "name_ko" | "name_en" | "category" | "unit_default"> | undefined;
 };
+
+type ActionState = {
+  ok: boolean;
+  message: string;
+};
+
+const INITIAL_ACTION_STATE: ActionState = {
+  ok: false,
+  message: ""
+};
+
+function DeleteButton() {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" variant="destructive" size="sm" disabled={pending}>
+      {pending ? "삭제 중..." : "삭제"}
+    </Button>
+  );
+}
+
+function DeleteObservationForm({ row }: { row: Row }) {
+  const [state, action] = useActionState(deleteObservationAction, INITIAL_ACTION_STATE);
+
+  return (
+    <form
+      action={action}
+      className="space-y-2"
+      onSubmit={(event) => {
+        if (
+          typeof window !== "undefined" &&
+          !window.confirm(`${row.observed_at} ${row.test?.name_ko || row.test?.name_en || ""} 값을 삭제할까요?`)
+        ) {
+          event.preventDefault();
+        }
+      }}
+    >
+      <input type="hidden" name="test_id" value={row.test_id} />
+      <input type="hidden" name="observed_at" value={row.observed_at} />
+      <DeleteButton />
+      {state.message ? (
+        <p className={`text-xs ${state.ok ? "text-secondary-foreground" : "text-destructive"}`}>
+          {state.message}
+        </p>
+      ) : null}
+    </form>
+  );
+}
 
 export function ObservationsTable({ rows }: { rows: Row[] }) {
   const [query, setQuery] = useState("");
@@ -75,6 +126,7 @@ export function ObservationsTable({ rows }: { rows: Row[] }) {
             <TableHead>단위</TableHead>
             <TableHead>정상범위</TableHead>
             <TableHead>Flag</TableHead>
+            <TableHead>삭제</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -90,6 +142,9 @@ export function ObservationsTable({ rows }: { rows: Row[] }) {
                 {row.ref_low ?? "-"} ~ {row.ref_high ?? "-"}
               </TableCell>
               <TableCell>{resolveObservationFlag(row) || "-"}</TableCell>
+              <TableCell>
+                <DeleteObservationForm row={row} />
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>

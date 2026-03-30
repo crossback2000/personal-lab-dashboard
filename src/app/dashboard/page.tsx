@@ -1,6 +1,6 @@
-import { CATEGORY_ORDER, categoryLabel } from "@/lib/constants";
+import { CATEGORY_ORDER } from "@/lib/constants";
 import { getDashboardCards, type DashboardCardData } from "@/lib/data/repository";
-import { TestCard } from "@/components/dashboard/test-card";
+import { DashboardTestGrid } from "@/components/dashboard/dashboard-test-grid";
 import type { TestRow } from "@/types/database";
 
 type SectionData = {
@@ -36,21 +36,7 @@ export default async function DashboardPage() {
         </div>
       ) : null}
 
-      {sections.map((section) => (
-        <section key={section.category} className="space-y-3">
-          <h3 className="text-lg font-semibold">{categoryLabel(section.category)}</h3>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {section.cards.map((card) => (
-              <TestCard
-                key={card.test.id}
-                test={card.test}
-                latest={card.latest}
-                sparklineValues={card.sparklineValues}
-              />
-            ))}
-          </div>
-        </section>
-      ))}
+      <DashboardTestGrid sections={sections} />
     </div>
   );
 }
