@@ -718,6 +718,117 @@ export async function deleteObservation(params: { testId: string; observedAt: st
   return result.changes;
 }
 
+export async function updateTestDetail(params: {
+  testId: string;
+  nameEn: string;
+  nameKo: string | null;
+  unitDefault: string | null;
+  refLow: number | null;
+  refHigh: number | null;
+  observations: Array<{
+    id: string;
+    observedAt: string;
+    valueNumeric: number | null;
+    valueText: string | null;
+  }>;
+}) {
+  const db = getDb();
+  const timestamp = nowIso();
+
+  const transaction = db.transaction(() => {
+    db.prepare(
+      `
+      update tests
+      set
+        name_en = ?,
+        name_ko = ?,
+        unit_default = ?,
+        updated_at = ?
+      where id = ?
+    `
+    ).run(params.nameEn, params.nameKo, params.unitDefault, timestamp, params.testId);
+
+    db.prepare(
+      `
+      update observations
+      set
+        unit = ?,
+        ref_low = ?,
+        ref_high = ?,
+        flag = ?,
+        updated_at = ?
+      where test_id = ?
+    `
+    ).run(params.unitDefault, params.refLow, params.refHigh, null, timestamp, params.testId);
+
+    const temporaryRows = params.observations.map((row, index) => ({
+      ...row,
+      temporaryObservedAt: `__temp__${timestamp}__${index}`
+    }));
+
+    const tempStatement = db.prepare(
+      `
+      update observations
+      set
+        observed_at = ?,
+        updated_at = ?
+      where id = ? and test_id = ?
+    `
+    );
+
+    for (const row of temporaryRows) {
+      const result = tempStatement.run(row.temporaryObservedAt, timestamp, row.id, params.testId);
+      if (result.changes === 0) {
+        throw new Error("상세 데이터 저장 중 일부 항목을 찾지 못했습니다.");
+      }
+    }
+
+    const statement = db.prepare(
+      `
+      update observations
+      set
+        observed_at = ?,
+        value_numeric = ?,
+        value_text = ?,
+        unit = ?,
+        ref_low = ?,
+        ref_high = ?,
+        flag = ?,
+        updated_at = ?
+      where id = ? and test_id = ?
+    `
+    );
+
+    for (const row of temporaryRows) {
+      const derivedFlag = deriveFlag({
+        valueNumeric: row.valueNumeric,
+        refLow: params.refLow,
+        refHigh: params.refHigh,
+        inputFlag: null
+      });
+
+      const result = statement.run(
+        row.observedAt,
+        row.valueNumeric,
+        row.valueText,
+        params.unitDefault,
+        params.refLow,
+        params.refHigh,
+        derivedFlag,
+        timestamp,
+        row.id,
+        params.testId
+      );
+
+      if (result.changes === 0) {
+        throw new Error("상세 데이터 저장 중 일부 항목을 찾지 못했습니다.");
+      }
+    }
+  });
+
+  transaction();
+}
+
 export async function updateObservationByTestAndDate(params: {
   testId: string;
   originalObservedAt: string;

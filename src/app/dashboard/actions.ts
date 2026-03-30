@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import {
   deleteObservation,
@@ -8,6 +9,7 @@ import {
   getObservationByTestAndDate,
   getObservationsLite,
   getTestById,
+  updateTestDetail,
   updateObservationByTestAndDate,
   upsertObservation
 } from "@/lib/data/repository";
@@ -78,6 +80,13 @@ export async function saveObservationAction(
     const baseline = originalObservedAt
       ? await getObservationByTestAndDate(testId, originalObservedAt, { includeRawRow: true })
       : (await getObservationsLite(testId, "all"))[0] ?? null;
+
+    if (!originalObservedAt) {
+      const existing = await getObservationByTestAndDate(testId, observedAt, { includeRawRow: false });
+      if (existing) {
+        return { ok: false, message: "같은 날짜 데이터가 이미 존재합니다." };
+      }
+    }
 
     if (originalObservedAt && !baseline) {
       return { ok: false, message: "수정할 기존 데이터를 찾지 못했습니다." };
@@ -208,4 +217,100 @@ export async function deleteTestsAction(
       message: error instanceof Error ? error.message : "검사 항목 삭제 중 오류가 발생했습니다."
     };
   }
+}
+
+export async function saveTestDetailAction(
+  _prev: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  try {
+    await requireUser();
+    assertRestoreWritable();
+
+    const testId = String(formData.get("test_id") || "").trim();
+    const nameKoInput = String(formData.get("name_ko") || "").trim();
+    const nameEnInput = String(formData.get("name_en") || "").trim();
+    const unitDefault = String(formData.get("unit_default") || "").trim() || null;
+    const refLow = parseNullableNumber(String(formData.get("ref_low") || ""));
+    const refHigh = parseNullableNumber(String(formData.get("ref_high") || ""));
+    const observationIds = formData
+      .getAll("observation_ids")
+      .map((value) => String(value).trim())
+      .filter(Boolean);
+
+    if (!testId) {
+      return { ok: false, message: "검사 항목을 찾지 못했습니다." };
+    }
+
+    const resolvedNameEn = nameEnInput || nameKoInput;
+    if (!resolvedNameEn) {
+      return { ok: false, message: "항목명(한글 또는 영문) 중 하나는 입력하세요." };
+    }
+
+    if (refLow !== null && refHigh !== null && refLow > refHigh) {
+      return { ok: false, message: "정상범위 하한은 상한보다 클 수 없습니다." };
+    }
+
+    const seenDates = new Set<string>();
+    const observations = observationIds.map((id) => {
+      const observedAt = String(formData.get(`observed_at_${id}`) || "").trim();
+      const { valueNumeric, valueText } = parseValueInput(formData.get(`value_${id}`));
+
+      if (!isIsoDateOnly(observedAt)) {
+        throw new Error("날짜 형식이 올바르지 않습니다.");
+      }
+
+      if (valueNumeric === null && !valueText) {
+        throw new Error("모든 상세 데이터에 값을 입력하세요.");
+      }
+
+      if (seenDates.has(observedAt)) {
+        throw new Error("상세 데이터 날짜는 중복될 수 없습니다.");
+      }
+      seenDates.add(observedAt);
+
+      return {
+        id,
+        observedAt,
+        valueNumeric,
+        valueText
+      };
+    });
+
+    await updateTestDetail({
+      testId,
+      nameEn: resolvedNameEn,
+      nameKo: nameKoInput || null,
+      unitDefault,
+      refLow,
+      refHigh,
+      observations
+    });
+
+    revalidateDashboardPaths(testId);
+    return { ok: true, message: "검사항목 상세가 수정되었습니다." };
+  } catch (error) {
+    if (isRestoreWriteLockedError(error)) {
+      return { ok: false, message: "현재 복원 작업 중입니다. 잠시 후 다시 시도해 주세요." };
+    }
+
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "검사항목 수정 중 오류가 발생했습니다."
+    };
+  }
+}
+
+export async function deleteTestDetailAction(formData: FormData) {
+  await requireUser();
+  assertRestoreWritable();
+
+  const testId = String(formData.get("test_id") || "").trim();
+  if (!testId) {
+    throw new Error("삭제할 검사 항목을 찾지 못했습니다.");
+  }
+
+  await deleteTests([testId]);
+  revalidateDashboardPaths(testId);
+  redirect("/dashboard");
 }
