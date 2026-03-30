@@ -61,7 +61,7 @@ export default async function TestDetailPage({
             <p className="text-sm text-muted-foreground">{test.name_en}</p>
           ) : null}
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {PERIOD_OPTIONS.map((option) => (
             <Link
               key={option.value}
@@ -127,7 +127,12 @@ export default async function TestDetailPage({
         />
       )}
 
-      <TestDetailObservations test={test} observations={observations} latestForAdd={latestForAdd} />
+      <TestDetailObservations
+        test={test}
+        observations={observations}
+        editObservations={allObservations}
+        latestForAdd={latestForAdd}
+      />
 
       {explanation ? <TestExplanationCard explanation={explanation} /> : null}
     </div>
