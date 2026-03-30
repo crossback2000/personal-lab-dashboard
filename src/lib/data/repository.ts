@@ -227,6 +227,57 @@ export async function getObservationsLite(testId?: string, period: PeriodOption 
   return getObservations(testId, period, { includeRawRow: false });
 }
 
+export async function getTestById(testId: string) {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `
+      select id, name_en, name_ko, category, unit_default, created_at, updated_at
+      from tests
+      where id = ?
+      limit 1
+    `
+    )
+    .get(testId) as DbTestRow | undefined;
+
+  return row ? mapTest(row) : null;
+}
+
+export async function getObservationByTestAndDate(
+  testId: string,
+  observedAt: string,
+  options?: {
+    includeRawRow?: boolean;
+  }
+) {
+  const db = getDb();
+  const includeRawRow = options?.includeRawRow ?? true;
+  const row = db
+    .prepare(
+      `
+      select
+        id,
+        test_id,
+        observed_at,
+        value_numeric,
+        value_text,
+        unit,
+        ref_low,
+        ref_high,
+        flag,
+        ${includeRawRow ? "raw_row" : "null as raw_row"},
+        created_at,
+        updated_at
+      from observations
+      where test_id = ? and observed_at = ?
+      limit 1
+    `
+    )
+    .get(testId, observedAt) as DbObservationRow | undefined;
+
+  return row ? mapObservation(row, { includeRawRow }) : null;
+}
+
 export async function getObservationsWithTests(options?: { includeRawRow?: boolean }) {
   const db = getDb();
   const includeRawRow = options?.includeRawRow ?? true;
@@ -651,6 +702,115 @@ export async function upsertObservation(params: {
     .get(params.testId, params.observedAt) as DbObservationRow;
 
   return mapObservation(row);
+}
+
+export async function deleteObservation(params: { testId: string; observedAt: string }) {
+  const db = getDb();
+  const result = db
+    .prepare(
+      `
+      delete from observations
+      where test_id = ? and observed_at = ?
+    `
+    )
+    .run(params.testId, params.observedAt);
+
+  return result.changes;
+}
+
+export async function updateObservationByTestAndDate(params: {
+  testId: string;
+  originalObservedAt: string;
+  nextObservedAt: string;
+  valueNumeric: number | null;
+  valueText: string | null;
+  unit: string | null;
+  refLow: number | null;
+  refHigh: number | null;
+  flag: "H" | "L" | null;
+  rawRow?: Record<string, unknown> | null;
+}) {
+  const db = getDb();
+  const timestamp = nowIso();
+  const derivedFlag = deriveFlag({
+    valueNumeric: params.valueNumeric,
+    refLow: params.refLow,
+    refHigh: params.refHigh,
+    inputFlag: params.flag
+  });
+
+  const existing = db
+    .prepare(
+      `
+      select id
+      from observations
+      where test_id = ? and observed_at = ?
+      limit 1
+    `
+    )
+    .get(params.testId, params.originalObservedAt) as { id: string } | undefined;
+
+  if (!existing) {
+    return 0;
+  }
+
+  const result = db
+    .prepare(
+      `
+      update observations
+      set
+        observed_at = ?,
+        value_numeric = ?,
+        value_text = ?,
+        unit = ?,
+        ref_low = ?,
+        ref_high = ?,
+        flag = ?,
+        raw_row = ?,
+        updated_at = ?
+      where test_id = ? and observed_at = ?
+    `
+    )
+    .run(
+      params.nextObservedAt,
+      params.valueNumeric,
+      params.valueText,
+      params.unit,
+      params.refLow,
+      params.refHigh,
+      derivedFlag,
+      params.rawRow ? JSON.stringify(params.rawRow) : null,
+      timestamp,
+      params.testId,
+      params.originalObservedAt
+    );
+
+  return result.changes;
+}
+
+export async function deleteTests(testIds: string[]) {
+  const ids = Array.from(new Set(testIds.map((value) => value.trim()).filter(Boolean)));
+  if (ids.length === 0) {
+    return 0;
+  }
+
+  const db = getDb();
+  const statement = db.prepare(
+    `
+    delete from tests
+    where id = ?
+  `
+  );
+
+  const transaction = db.transaction((values: string[]) => {
+    let deleted = 0;
+    for (const id of values) {
+      deleted += statement.run(id).changes;
+    }
+    return deleted;
+  });
+
+  return transaction(ids);
 }
 
 export async function importParsedObservations(params: {
